@@ -74,20 +74,20 @@ EvaluateAppScenario <- function(
 #' @importFrom tibble tibble
 #' @importFrom Seurat AddMetaData
 #'
-eval_clustering <- function(SimulationResult,
-                            min_cells = 0,
-                            min_genes = 0,
-                            min_total_counts = 0,
-                            min_counts_per_gene = 1,
-                            PCs = 20,
-                            n_cores = 1,
-                            learning_rate = 0.001,
-                            batch_size = 64,
-                            epochs = 200,
-                            tsne_dims = 3,
-                            perplexity = 30,
-                            seed,
-                            verbose = TRUE){
+EvalClusteringMethods <- function(SimulationResult,
+                                  min_cells = 0,
+                                  min_genes = 0,
+                                  min_total_counts = 0,
+                                  min_counts_per_gene = 1,
+                                  PCs = 20,
+                                  n_cores = 1,
+                                  learning_rate = 0.001,
+                                  batch_size = 64,
+                                  epochs = 200,
+                                  tsne_dims = 3,
+                                  perplexity = 30,
+                                  seed,
+                                  verbose = TRUE){
   #-------- Check Necessary Information --------#
   if(S4Vectors::isEmpty(SimulationResult@simulation_result)){
     print_color_word("no No simulated data is found.")
@@ -146,7 +146,6 @@ eval_clustering <- function(SimulationResult,
     resolution <- .find_resolution(seurat,
                                    groups = ngroups,
                                    algorithm = 1,
-                                   PCs = PCs,
                                    seed = seed)
     seurat_louvain <- Seurat::FindClusters(object = seurat,
                                            algorithm = 1,
@@ -166,7 +165,6 @@ eval_clustering <- function(SimulationResult,
       resolution <- .find_resolution(seurat,
                                      groups = ngroups,
                                      algorithm = 4,
-                                     PCs = PCs,
                                      seed = seed)
       seurat_leiden <- Seurat::FindClusters(object = seurat,
                                             algorithm = 4,
@@ -329,6 +327,7 @@ eval_clustering <- function(SimulationResult,
     }
     gene_metadata <- data.frame("gene_short_name" = rownames(data),
                                 row.names = rownames(data))
+
     cds <- data %>%
       monocle3::new_cell_data_set(cell_metadata = col_data,
                                   gene_metadata = gene_metadata) %>%
@@ -338,10 +337,18 @@ eval_clustering <- function(SimulationResult,
       monocle3::reduce_dimension(reduction_method = "UMAP",
                                  preprocess_method = "PCA",
                                  verbose = verbose,
-                                 cores = n_cores) %>%
-      monocle3::cluster_cells(reduction_method = "UMAP",
-                              cluster_method = "leiden",
-                              verbose = FALSE)
+                                 cores = n_cores)
+    resolution <- .find_resolution(cds,
+                                   groups = ngroups,
+                                   algorithm = 4,
+                                   seed = seed)
+    cds <- monocle3::cluster_cells(cds,
+                                   reduction_method = "UMAP",
+                                   k = 20,
+                                   num_iter = 10,
+                                   resolution = resolution,
+                                   cluster_method = "leiden",
+                                   verbose = FALSE)
     monocle3_result <- monocle3::clusters(cds) %>% as.numeric()
     names(monocle3_result) <- colnames(cds)
 

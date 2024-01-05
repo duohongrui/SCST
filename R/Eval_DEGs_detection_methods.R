@@ -5,9 +5,10 @@
 #' @importFrom stats model.matrix p.adjust t.test var predict
 #' @importFrom methods new
 #' @importFrom utils combn
+#' @export
 #' @references
 #' Soneson C, Robinson M D. Bias, robustness and scalability in single-cell differential expression analysis. Nature methods, 2018, 15(4): 255-261. <https://doi.org/10.1038/nmeth.4612>
-perform_DEA <- function(
+EvalDEAMethods <- function(
     SimulationResult,
     verbose = TRUE
 ){
@@ -21,7 +22,7 @@ perform_DEA <- function(
     print_color_word(paste("------Perform Defferential Expression Analysis On", used_method), color = "blue")
     data <- SimulationResult@simulation_result[[used_method]][["count_data"]]
     col_data <- SimulationResult@simulation_result[[used_method]][["col_meta"]]
-    group <- col_data[, "group"]
+    group <- col_data[, "group"] %>% as.character()
     ## Filter
     filter_index <- rowSums(data) > 0
     if(verbose){

@@ -338,26 +338,49 @@ get_count_data <- function(SCSTObject){
 
 
 .find_resolution <- function(
-    seurat,
+    object,
     groups,
-    PCs,
     algorithm,
     seed)
 {
-  resolution_ranges <- seq(0.1, 1.5, 0.1)
-  for(i in resolution_ranges){
-    tmp <- Seurat::FindClusters(object = seurat,
-                                algorithm = algorithm,
-                                resolution = i,
-                                random.seed = seed,
-                                verbose = FALSE)
-    ngroup <- length(levels(unique(tmp@meta.data$seurat_clusters)))
-    if(ngroup == groups){
-      return(i)
-    }else{
-      if(ngroup > groups){
-        resolution <- i - 0.05
-        return(resolution)
+  if(methods::is(object, "Seurat")){
+    resolution_ranges <- seq(0.1, 1.5, 0.1)
+    for(i in resolution_ranges){
+      tmp <- Seurat::FindClusters(object = object,
+                                  algorithm = algorithm,
+                                  resolution = i,
+                                  random.seed = seed,
+                                  verbose = FALSE)
+      ngroup <- length(levels(unique(tmp@meta.data$seurat_clusters)))
+      if(ngroup == groups){
+        return(i)
+      }else{
+        if(ngroup > groups){
+          resolution <- i - 0.05
+          return(resolution)
+        }
+      }
+    }
+  }
+  if(methods::is(object, "cell_data_set")){
+    resolution_ranges <- seq(5e-6, 0.01, 5e-4)
+    for(i in resolution_ranges){
+      tmp <- monocle3::cluster_cells(object,
+                                     reduction_method = "UMAP",
+                                     k = 20,
+                                     num_iter = 10,
+                                     resolution = i,
+                                     cluster_method = "leiden",
+                                     verbose = FALSE)
+      monocle3_result <- monocle3::clusters(tmp) %>% as.numeric()
+      ngroup <- length(unique(monocle3_result))
+      if(ngroup == groups){
+        return(i)
+      }else{
+        if(ngroup > groups){
+          resolution <- i - 0.00025
+          return(resolution)
+        }
       }
     }
   }
