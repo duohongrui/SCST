@@ -186,20 +186,12 @@ integrate_multi_result <- function(
     step = "estimation"
 ){
   method_name <- names(slot(result, paste0(step, "_result")))
-
   slot(SCST_Object, paste0(step, "_result")) <- append(slot(SCST_Object, paste0(step, "_result")),
                                                        slot(result, paste0(step, "_result")))
   slot(SCST_Object, paste0(step, "_time_memory")) <- append(slot(SCST_Object, paste0(step, "_time_memory")),
                                                             slot(result, paste0(step, "_time_memory")))
   slot(SCST_Object, paste0(step, "_parameters")) <- append(slot(SCST_Object, paste0(step, "_parameters")),
                                                            slot(result, paste0(step, "_parameters")))
-
-  # if(is.null(slot(result, paste0(step, "_result")))){
-  #   ### When the method does not contain the estimation step
-  #
-  # }else{
-  #   ### When the estimation result is available
-  # }
   return(SCST_Object)
 }
 
@@ -263,6 +255,262 @@ Set_customed_parameters <- function(
                                                              tmp_list)
   }
   return(SCST_Object)
+}
+
+
+get_cell_meta <- function(SCSTObject){
+  ### Check
+  if(S4Vectors::isEmpty(SCSTObject@simulation_result)){
+    print_color_word("no No simulation results are found.")
+    stop(error_output())
+  }
+  ### For each method
+  methods <- names(SCSTObject@simulation_result)
+  cell_meta <- lapply(methods, FUN = function(x){
+    tmp <- SCSTObject@simulation_result[[x]]
+    if(is.list(tmp)){
+      col_data <- tmp$col_meta
+    }else if(methods::as(tmp, "Seurat")){
+      col_data <- tmp$meta.data
+    }else if(methods::as(tmp, "SingleCellExperiment")){
+      col_data <- SingleCellExperiment::colData(tmp) %>% as.data.frame()
+    }
+  }) %>% stats::setNames(methods)
+  if(length(methods) == 1){
+    cell_meta <- cell_meta[[1]]
+  }
+  return(cell_meta)
+}
+
+get_gene_meta <- function(SCSTObject){
+  ### Check
+  if(S4Vectors::isEmpty(SCSTObject@simulation_result)){
+    print_color_word("no No simulation results are found.")
+    stop(error_output())
+  }
+  ### For each method
+  methods <- names(SCSTObject@simulation_result)
+  gene_meta <- lapply(methods, FUN = function(x){
+    tmp <- SCSTObject@simulation_result[[x]]
+    if(is.list(tmp)){
+      row_data <- tmp$row_meta
+    }else if(methods::as(tmp, "Seurat")){
+      default_assay <- Seurat::GetAssay(tmp)
+      row_data <- default_assay@meta.data
+    }else if(methods::as(tmp, "SingleCellExperiment")){
+      row_data <- SingleCellExperiment::rowData(tmp) %>% as.data.frame()
+    }
+  }) %>% stats::setNames(methods)
+  if(length(methods) == 1){
+    gene_meta <- gene_meta[[1]]
+  }
+  return(gene_meta)
+}
+
+get_count_data <- function(SCSTObject){
+  ### Check
+  if(S4Vectors::isEmpty(SCSTObject@simulation_result)){
+    print_color_word("no No simulation results are found.")
+    stop(error_output())
+  }
+  ### For each method
+  methods <- names(SCSTObject@simulation_result)
+  count_data <- lapply(methods, FUN = function(x){
+    tmp <- SCSTObject@simulation_result[[x]]
+    if(is.list(tmp)){
+      count_data <- tmp$"count_data"
+    }else if(methods::as(tmp, "Seurat")){
+      default_assay <- Seurat::GetAssay(tmp)
+      if(packageVersion("Seurat") >= "5.0"){
+        count_data <- default_assay$counts %>% as.matrix()
+      }else{
+        count_data <- default_assay@counts %>% as.matrix()
+      }
+    }else if(methods::as(tmp, "SingleCellExperiment")){
+      count_data <- SingleCellExperiment::counts(tmp)
+    }
+  }) %>% stats::setNames(methods)
+  if(length(methods) == 1){
+    count_data <- count_data[[1]]
+  }
+  return(count_data)
+}
+
+
+.find_resolution <- function(
+    seurat,
+    groups,
+    PCs,
+    algorithm,
+    seed)
+{
+  resolution_ranges <- seq(0.1, 1.5, 0.1)
+  for(i in resolution_ranges){
+    tmp <- Seurat::FindClusters(object = seurat,
+                                algorithm = algorithm,
+                                resolution = i,
+                                random.seed = seed,
+                                verbose = FALSE)
+    ngroup <- length(levels(unique(tmp@meta.data$seurat_clusters)))
+    if(ngroup == groups){
+      return(i)
+    }else{
+      if(ngroup > groups){
+        resolution <- i - 0.05
+        return(resolution)
+      }
+    }
+  }
+}
+
+
+
+check_info_pre_application <- function(
+    SimulationResult,
+    Group = FALSE,
+    DEGs = FALSE,
+    Batch = FALSE
+){
+  col_data <- get_cell_meta(SimulationResult)
+  row_data <- get_gene_meta(SimulationResult)
+  validated_methods <- names(SimulationResult@simulation_result)
+  for(i in names(SimulationResult@simulation_result)){
+    temp <- col_data[[i]]
+    temp_row <- row_data[[i]]
+    ### Check group info
+    if(Group){
+      if("group" %in% colnames(temp)){
+        if(length(unique(temp[, "group"])) == 1){
+          print_color_word(paste0("No cell groups are found in ", i, ". We will skip the simulated output of this method."),
+                           color = "yellow")
+          validated_methods <- validated_methods[-grep(i, validated_methods)]
+        }
+      }else{
+        print_color_word(paste0("No cell groups are found in ", i, ". We will skip the simulated output of this method."),
+                         color = "yellow")
+        validated_methods <- validated_methods[-grep(i, validated_methods)]
+      }
+    }
+    ### Check DEGs info
+    if(DEGs){
+      if("de_gene" %in% colnames(temp_row)){
+        if(length(unique(temp_row[, "de_gene"])) == 1){
+          print_color_word(paste0("No DEGs are found in ", i, ". We will skip the simulated output of this method."),
+                           color = "yellow")
+          validated_methods <- validated_methods[-grep(i, validated_methods)]
+        }
+      }else{
+        print_color_word(paste0("No DEGs are found in ", i, ". We will skip the simulated output of this method."),
+                         color = "yellow")
+        validated_methods <- validated_methods[-grep(i, validated_methods)]
+      }
+    }
+    ### Check batch info
+    if(Batch){
+      for(i in names(SimulationResult@simulation_result)){
+        temp <- temp[[i]]
+        if("group" %in% colnames(temp)){
+          if(length(unique(temp[, "batch"])) == 1){
+            print_color_word(paste0("No cell batches are found in ", i, ". We will skip the simulated output of this method."),
+                             color = "yellow")
+            validated_methods <- validated_methods[-grep(i, validated_methods)]
+          }
+        }else{
+          print_color_word(paste0("No cell batches are found in ", i, ". We will skip the simulated output of this method."),
+                           color = "yellow")
+          validated_methods <- validated_methods[-grep(i, validated_methods)]
+        }
+      }
+    }
+  }
+  ### Return check results
+  if(S4Vectors::isEmpty(validated_methods)){
+    print_color_word("no No information of cell groups/batches/DEGs is found in the simulated results.")
+    stop(error_output())
+  }else{
+    return(validated_methods)
+  }
+}
+
+
+### Modeling simulated data with all DEGs for verify the validity of DEGs
+model_predict <- function(train_data,
+                          train_group,
+                          test_data,
+                          test_group){
+  if(!requireNamespace("e1071", quietly = TRUE)){
+    message("e1071 is not installed on your device...")
+    message("Installing e1071...")
+    utils::install.packages("e1071")
+  }
+  if(!requireNamespace("caret", quietly = TRUE)){
+    message("caret is not installed on your device...")
+    message("Installing caret...")
+    utils::install.packages("caret")
+  }
+  if(!requireNamespace("pROC", quietly = TRUE)){
+    message("pROC is not installed on your device...")
+    message("Installing pROC...")
+    utils::install.packages("pROC")
+  }
+  svm_classifier <- e1071::svm(x = train_data,
+                               y = as.factor(train_group),
+                               cross = 10,
+                               probability = TRUE,
+                               kernel = 'radial',
+                               scale = FALSE)
+  predict_class <- stats::predict(svm_classifier,
+                                  as.matrix(test_data),
+                                  prob = FALSE)
+  conf_matrix <- caret::confusionMatrix(predict_class,
+                                        test_group,
+                                        mode = "everything")
+  predict_prob <- stats::predict(svm_classifier,
+                                 as.matrix(test_data),
+                                 prob = TRUE)
+  if(length(unique(train_group)) == 2){
+    roc <- pROC::roc(response = test_group,
+                     predictor = attr(predict_prob, "probabilities")[, 1],
+                     quiet = TRUE)
+  }else{
+    suppressMessages(
+      roc <- pROC::multiclass.roc(response = test_group,
+                                  predictor = attr(predict_prob, "probabilities"),
+                                  quiet = TRUE)
+    )
+  }
+  return(list(conf_matrix = conf_matrix,
+              roc = roc))
+}
+
+
+### get true DEGs when number of cell groups is more than 3
+get_true_DEGs <- function(
+    row_meta,
+    group_pairs,
+    group1_name,
+    group2_name,
+    method_name
+){
+  if(stringr::str_starts(method_name, pattern = "Splat") |
+     stringr::str_starts(method_name, pattern = "SCRIP") |
+     stringr::str_starts(method_name, pattern = "(Lun_)")){
+    fac1 <- row_meta[, stringr::str_ends(colnames(row_meta), pattern = group1_name)]
+    fac2 <- row_meta[, stringr::str_ends(colnames(row_meta), pattern = group2_name)]
+    index <- fac1 != fac2
+    DEGs <- row_meta$gene_name[index]
+  }
+  ### muscat, scDesign, SPARSim (every pair of groups dose not have its own DEGs)
+  if(stringr::str_starts(method_name, pattern = "muscat") |
+     stringr::str_starts(method_name, pattern = "scDesign") |
+     stringr::str_starts(method_name, pattern = "SPARSim")){
+    if(group_pairs == 1){
+      DEGs <- row_meta$gene_name[row_meta$de_gene == "yes"]
+    }else{
+      DEGs <- NULL
+    }
+  }
+  return(DEGs)
 }
 
 

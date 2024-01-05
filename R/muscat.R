@@ -8,6 +8,7 @@
 #' @param ... Other parameters represented in muscat, see [muscat::prepSim()]
 #'
 #' @references Crowell H L, Soneson C, Germain P L, et al. Muscat detects subpopulation-specific state transitions from multi-sample multi-condition single-cell transcriptomics data. Nature communications, 2020, 11(1): 1-12. <https://doi.org/10.1038/s41467-020-19894-4>
+#' @export
 #'
 muscat_estimation <- function(SCST_Object,
                               cluster = NULL,
@@ -51,11 +52,13 @@ muscat_estimation <- function(SCST_Object,
                          "min_count" = min_count,
                          "min_cells" = min_cells,
                          "min_genes" = min_genes,
-                         "min_size" = NULL,
-                         "verbose" = verbose)
+                         "verbose" = verbose,
+                         "group_keep" = levels(as.factor(col_data$"group_id")))
   existed_params <- append(existed_params, list(...))
   argument <- formals(muscat::prepSim)
   used_argument <- change_parameters(existed_params, argument)
+  used_argument <- used_argument[-grep("min_size", names(used_argument))]
+  used_argument <- append(used_argument, list("min_size" = NULL))
   ##############################################################################
   ####                            Estimation                                 ###
   ##############################################################################
@@ -97,6 +100,7 @@ muscat_estimation <- function(SCST_Object,
 #' @importFrom dplyr transmute case_when
 #'
 #' @references Crowell H L, Soneson C, Germain P L, et al. Muscat detects subpopulation-specific state transitions from multi-sample multi-condition single-cell transcriptomics data. Nature communications, 2020, 11(1): 1-12. <https://doi.org/10.1038/s41467-020-19894-4>
+#' @export
 #'
 muscat_simulation <- function(estimated_result,
                               cell_num = NULL,
