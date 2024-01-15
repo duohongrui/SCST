@@ -62,9 +62,15 @@ data_conversion <- function(
                                   row_meta)
   }
   if(return_format == "Seurat"){
-    simulate_result <- Seurat::as.Seurat(simulate_result,
-                                         counts = "counts",
-                                         data = NULL)
+    if(utils::packageVersion("Seurat") < 5.0){
+      simulate_result <- Seurat::as.Seurat(simulate_result,
+                                           counts = "counts",
+                                           data = NULL)
+    }else{
+      sparse_matrix <- as(SingleCellExperiment::counts(simulate_result), "dgCMatrix")
+      simulate_result <- Seurat::CreateSeuratObject(sparse_matrix,
+                                                    meta.data = as.data.frame(SingleCellExperiment::colData(simulate_result)))
+    }
   }
   return(simulate_result)
 }
@@ -249,10 +255,9 @@ Set_customed_parameters <- function(
     method_params <- method_params[-1]
     method_params <- method_params[-grep("verbose", names(method_params))]
     method_params[["return_format"]] <- return_format
-    tmp_list <- list()
-    tmp_list[[i]] <- method_params
-    methods::slot(SCST_Object, "customed_setting") <- append(methods::slot(SCST_Object, "customed_setting"),
-                                                             tmp_list)
+    # tmp_list <- list()
+    # tmp_list[[i]] <- method_params
+    methods::slot(SCST_Object, "customed_setting")[[i]] <- method_params
   }
   return(SCST_Object)
 }
@@ -260,7 +265,7 @@ Set_customed_parameters <- function(
 
 get_cell_meta <- function(SCSTObject){
   ### Check
-  if(S4Vectors::isEmpty(SCSTObject@simulation_result)){
+  if(length(SCSTObject@simulation_result) == 0){
     print_color_word("no No simulation results are found.")
     stop(error_output())
   }
@@ -270,21 +275,18 @@ get_cell_meta <- function(SCSTObject){
     tmp <- SCSTObject@simulation_result[[x]]
     if(is.list(tmp)){
       col_data <- tmp$col_meta
-    }else if(methods::as(tmp, "Seurat")){
-      col_data <- tmp$meta.data
-    }else if(methods::as(tmp, "SingleCellExperiment")){
+    }else if(methods::is(tmp, "Seurat")){
+      col_data <- tmp@meta.data
+    }else if(methods::is(tmp, "SingleCellExperiment")){
       col_data <- SingleCellExperiment::colData(tmp) %>% as.data.frame()
     }
   }) %>% stats::setNames(methods)
-  if(length(methods) == 1){
-    cell_meta <- cell_meta[[1]]
-  }
   return(cell_meta)
 }
 
 get_gene_meta <- function(SCSTObject){
   ### Check
-  if(S4Vectors::isEmpty(SCSTObject@simulation_result)){
+  if(length(SCSTObject@simulation_result) == 0){
     print_color_word("no No simulation results are found.")
     stop(error_output())
   }
@@ -294,22 +296,19 @@ get_gene_meta <- function(SCSTObject){
     tmp <- SCSTObject@simulation_result[[x]]
     if(is.list(tmp)){
       row_data <- tmp$row_meta
-    }else if(methods::as(tmp, "Seurat")){
+    }else if(methods::is(tmp, "Seurat")){
       default_assay <- Seurat::GetAssay(tmp)
       row_data <- default_assay@meta.data
-    }else if(methods::as(tmp, "SingleCellExperiment")){
+    }else if(methods::is(tmp, "SingleCellExperiment")){
       row_data <- SingleCellExperiment::rowData(tmp) %>% as.data.frame()
     }
   }) %>% stats::setNames(methods)
-  if(length(methods) == 1){
-    gene_meta <- gene_meta[[1]]
-  }
   return(gene_meta)
 }
 
 get_count_data <- function(SCSTObject){
   ### Check
-  if(S4Vectors::isEmpty(SCSTObject@simulation_result)){
+  if(length(SCSTObject@simulation_result) == 0){
     print_color_word("no No simulation results are found.")
     stop(error_output())
   }
@@ -319,24 +318,22 @@ get_count_data <- function(SCSTObject){
     tmp <- SCSTObject@simulation_result[[x]]
     if(is.list(tmp)){
       count_data <- tmp$"count_data"
-    }else if(methods::as(tmp, "Seurat")){
+    }else if(methods::is(tmp, "Seurat")){
       default_assay <- Seurat::GetAssay(tmp)
       if(packageVersion("Seurat") >= "5.0"){
         count_data <- default_assay$counts %>% as.matrix()
       }else{
         count_data <- default_assay@counts %>% as.matrix()
       }
-    }else if(methods::as(tmp, "SingleCellExperiment")){
+    }else if(methods::is(tmp, "SingleCellExperiment")){
       count_data <- SingleCellExperiment::counts(tmp)
     }
   }) %>% stats::setNames(methods)
-  if(length(methods) == 1){
-    count_data <- count_data[[1]]
-  }
   return(count_data)
 }
 
 
+### Find suitable resolution for Seurat and Monocle3
 .find_resolution <- function(
     object,
     groups,
@@ -387,12 +384,13 @@ get_count_data <- function(SCSTObject){
 }
 
 
-
+### Check necessary information before being used for evaluation
 check_info_pre_application <- function(
     SimulationResult,
     Group = FALSE,
     DEGs = FALSE,
-    Batch = FALSE
+    Batch = FALSE,
+    Spatial = FALSE
 ){
   col_data <- get_cell_meta(SimulationResult)
   row_data <- get_gene_meta(SimulationResult)
@@ -430,19 +428,24 @@ check_info_pre_application <- function(
     }
     ### Check batch info
     if(Batch){
-      for(i in names(SimulationResult@simulation_result)){
-        temp <- temp[[i]]
-        if("group" %in% colnames(temp)){
-          if(length(unique(temp[, "batch"])) == 1){
-            print_color_word(paste0("No cell batches are found in ", i, ". We will skip the simulated output of this method."),
-                             color = "yellow")
-            validated_methods <- validated_methods[-grep(i, validated_methods)]
-          }
-        }else{
+      if("batch" %in% colnames(temp)){
+        if(length(unique(temp[, "batch"])) == 1){
           print_color_word(paste0("No cell batches are found in ", i, ". We will skip the simulated output of this method."),
                            color = "yellow")
           validated_methods <- validated_methods[-grep(i, validated_methods)]
         }
+      }else{
+        print_color_word(paste0("No cell batches are found in ", i, ". We will skip the simulated output of this method."),
+                         color = "yellow")
+        validated_methods <- validated_methods[-grep(i, validated_methods)]
+      }
+    }
+    ### Check spatial info
+    if(Spatial){
+      if(!all("spatial_x" %in% colnames(temp), "spatial_y" %in% colnames(temp))){
+        print_color_word(paste0("No spatial coordinates are found in ", i, ". We will skip the simulated output of this method."),
+                         color = "yellow")
+        validated_methods <- validated_methods[-grep(i, validated_methods)]
       }
     }
   }

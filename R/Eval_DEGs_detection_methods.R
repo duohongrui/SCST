@@ -1,4 +1,4 @@
-#' Perform Differential Expression Analysis
+#' Evaluate Differential Expression Analysis Methods Using Simulated Data
 #'
 #' @param SimulationResult A SCST object containing the simulated results.
 #' @param verbose Whether the process massages are returned.

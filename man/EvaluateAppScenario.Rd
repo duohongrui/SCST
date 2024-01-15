@@ -2,7 +2,7 @@
 % Please edit documentation in R/Eval_clustering_methods.R
 \name{EvaluateAppScenario}
 \alias{EvaluateAppScenario}
-\title{Evaluate Computational Methods Under Multiple Scenarios Using Simulated Data}
+\title{Evaluate Clustering Methods Using Simulated Data}
 \usage{
 EvaluateAppScenario(
   SimulationResult,
@@ -36,5 +36,5 @@ EvaluateAppScenario(
 \item{eval_spatial_domain}{Logical, whether to evaluate the methods for identifying spatial domains on the simulated spatial data.}
 }
 \description{
-Evaluate Computational Methods Under Multiple Scenarios Using Simulated Data
+Evaluate Clustering Methods Using Simulated Data
 }

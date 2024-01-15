@@ -1,4 +1,4 @@
-#' Evaluate Computational Methods Under Multiple Scenarios Using Simulated Data
+#' Evaluate Clustering Methods Using Simulated Data
 #'
 #' @param SimulationResult A SCST object containing the simulated data.
 #' @param eval_clustering Logical, whether to evaluate the clustering methods on the simulated data.
@@ -89,18 +89,17 @@ EvalClusteringMethods <- function(SimulationResult,
                                   seed,
                                   verbose = TRUE){
   #-------- Check Necessary Information --------#
-  if(S4Vectors::isEmpty(SimulationResult@simulation_result)){
+  if(length(SimulationResult@simulation_result) == 0){
     print_color_word("no No simulated data is found.")
     stop(error_output())
   }
   validated_methods <- check_info_pre_application(SimulationResult = SimulationResult, Group = TRUE)
 
   ### Iterate all simulation methods and perform clustering and sequent evaluation
-  methods_names <- names(SimulationResult@simulation_result)
-  ClusteringResults <- purrr::map(methods_names, .f = function(methods_names){
+  ClusteringResults <- purrr::map(validated_methods, .f = function(method){
     #-------- Filtering --------#
-    data <- SimulationResult@simulation_result[[methods_names]][["count_data"]]
-    col_data <- SimulationResult@simulation_result[[methods_names]][["col_meta"]]
+    data <- SimulationResult@simulation_result[[method]][["count_data"]]
+    col_data <- SimulationResult@simulation_result[[method]][["col_meta"]]
     if(min_total_counts != 0){
       filter_index <- colSums(data) >= min_total_counts
       data <- data[, filter_index]
@@ -110,7 +109,7 @@ EvalClusteringMethods <- function(SimulationResult,
       data <- data[rowSums(data) >= min_counts_per_gene, ]
     }
     #-------- Methods --------#
-    print_color_word(paste("------Perform Clustering On", methods_names), color = "blue")
+    print_color_word(paste("------Perform Clustering On", method), color = "blue")
     ### 1. Seurat_Louvain
     seurat <- data %>%
       Seurat::CreateSeuratObject(min.cells = min_cells,
@@ -121,17 +120,20 @@ EvalClusteringMethods <- function(SimulationResult,
       Seurat::ScaleData(verbose = FALSE)
     ### Reset data and col_data
     if(packageVersion("Seurat") >= "5.0"){
-      data <- seurat@assays$RNA$counts %>% as.matrix()
+      data <- SeuratObject::LayerData(seurat, layer = "counts") %>% as.matrix()
     }else{
-      data <- seurat@assays$RNA@counts %>% as.matrix()
+      data <- methods::slot(Seurat::GetAssay(seurat), "counts") %>% as.matrix()
     }
     col_data <- seurat@meta.data
     ngroups <- length(unique(col_data$group))
     if(ncol(data) >= 8000){
       if(packageVersion("Seurat") >= "5.0"){
-        features <- Seurat::FindVariableFeatures(seurat, verbose = FALSE) %>% rownames()
+        seurat <- Seurat::FindVariableFeatures(seurat, verbose = FALSE)
+        features <- SeuratObject::VariableFeatures(seurat)
       }else{
-        features <- Seurat::FindVariableFeatures(seurat, verbose = FALSE)
+        seurat <- Seurat::FindVariableFeatures(seurat, verbose = FALSE)
+        features <- Seurat::GetAssay(seurat)
+        features <- features@var.features
       }
     }else{
       features <- rownames(data)
@@ -155,11 +157,6 @@ EvalClusteringMethods <- function(SimulationResult,
     seurat_louvain_result <- as.numeric(seurat_louvain@meta.data$seurat_clusters)
     names(seurat_louvain_result) <- colnames(seurat)
     ### 2. Seurat_Leiden
-    if(!requireNamespace("reticulate")){
-      message("reticulate is not installed on your device")
-      message("Installing reticulate...")
-      BiocManager::install("reticulate")
-    }
     all_packages <- reticulate::py_list_packages()
     if("leidenalg" %in% all_packages$package){
       resolution <- .find_resolution(seurat,
@@ -373,7 +370,7 @@ EvalClusteringMethods <- function(SimulationResult,
       all_clustering_results,
       trueLabels,
       data,
-      methods_names)
+      method)
     #-------- Add Clustering Results to Seurat For Visualization --------#
     all_clustering_results <- lapply(all_clustering_results, FUN = function(x){as.character(x)})
     seurat <- Seurat::AddMetaData(seurat, all_clustering_results)
@@ -381,26 +378,21 @@ EvalClusteringMethods <- function(SimulationResult,
     list("seurat" = seurat,
          "eval_clustering_table" = eval_clustering_table)
   })
-  names(ClusteringResults) <- methods_names
+  names(ClusteringResults) <- validated_methods
   return(ClusteringResults)
 }
 
 
-.CalculateClusteringMetrics <- function(ClusteringResults, trueLabels, data, methods_names){
+.CalculateClusteringMetrics <- function(ClusteringResults, trueLabels, data, method){
   if(!requireNamespace("aricode")){
     message("aricode is not installed on your device")
     message("Installing aricode")
     utils::install.packages("aricode")
   }
-  ### Iterate all clustering results and calculate metrics
-  eval_clustering_table <- purrr::map_dfr(names(ClusteringResults), .f = function(method_name){
-
-  })
-
-  print_color_word(paste("------Clustering Evaluation For", methods_names), color = "blue")
+  print_color_word(paste("------Clustering Evaluation For", method), color = "blue")
   cluster_eval_table <- purrr::map_dfr(1:length(ClusteringResults), .f = function(i){
-    print(i)
-    clustering_result <- ClusteringResults[[i]]
+    cluster_method <- names(ClusteringResults)[i]
+    clustering_result <- ClusteringResults[[cluster_method]]
     ### 1. ARI
     ARI <- aricode::ARI(trueLabels, clustering_result)
     ### 2. NMI
@@ -465,8 +457,8 @@ EvalClusteringMethods <- function(SimulationResult,
     dunn <- clValid::dunn(distance = dist, clusters = cluster_info)
 
     #### Save results
-    tibble::tibble("Simulation_Method" = methods_names,
-                   "Clustering_Method" = names(ClusteringResults)[i],
+    tibble::tibble("Simulation_Method" = method,
+                   "Clustering_Method" = cluster_method,
                    "ARI" = ARI,
                    "NMI" = NMI,
                    "CDI" = CDI,

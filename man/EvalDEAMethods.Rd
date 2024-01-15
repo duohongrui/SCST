@@ -2,7 +2,7 @@
 % Please edit documentation in R/Eval_DEGs_detection_methods.R
 \name{EvalDEAMethods}
 \alias{EvalDEAMethods}
-\title{Perform Differential Expression Analysis}
+\title{Evaluate Differential Expression Analysis Methods Using Simulated Data}
 \usage{
 EvalDEAMethods(SimulationResult, verbose = TRUE)
 }
@@ -12,7 +12,7 @@ EvalDEAMethods(SimulationResult, verbose = TRUE)
 \item{verbose}{Whether the process massages are returned.}
 }
 \description{
-Perform Differential Expression Analysis
+Evaluate Differential Expression Analysis Methods Using Simulated Data
 }
 \references{
 Soneson C, Robinson M D. Bias, robustness and scalability in single-cell differential expression analysis. Nature methods, 2018, 15(4): 255-261. <https://doi.org/10.1038/nmeth.4612>
