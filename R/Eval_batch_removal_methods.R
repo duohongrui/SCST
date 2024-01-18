@@ -200,7 +200,7 @@ EvalBatchRemovalMethods <- function(SimulationResult,
     #-------- Record Resource Occupation During Execution --------#
     resource_monitering <- tibble::tibble(
       "Simulation_Method" = method,
-      "Clustering_Method" = c("scVI", "scANVI", "Scanorama", "scGen", "fastMNN", "Harmony"),
+      "Batch_Removal_Method" = c("scVI", "scANVI", "Scanorama", "scGen", "fastMNN", "Harmony"),
       "Time" = c(scVI_moni[, 2],
                  scANVI_moni[, 2],
                  Scanorama_moni[, 2],

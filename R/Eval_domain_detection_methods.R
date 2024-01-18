@@ -222,7 +222,7 @@ EvalDomainDetectionMethods <- function(SimulationResult,
     #-------- Record Resource Occupation During Execution --------#
     resource_monitering <- tibble::tibble(
       "Simulation_Method" = method,
-      "Clustering_Method" = names(all_domain_detection_results),
+      "Domain_Detection_Method" = names(all_domain_detection_results),
       "Time" = c(DeepST_moni[, 2],
                  seurat_leiden_moni[, 2],
                  seurat_louvain_moni[, 2],

@@ -41,11 +41,15 @@ EvalAssociationMethods <- function(SimulationResult,
       BiocManager::install("WGCNA")
     }
     print_color_word(paste("\u2192", "Calculating Pearson Correlation..."), color = "green")
-    all_association_results[["PearsonCorrelation"]] <- WGCNA::cor(data, method = "pearson", nThreads = n_cores)
+    PearsonCorrelation_moni <- peakRAM::peakRAM(
+      all_association_results[["PearsonCorrelation"]] <- WGCNA::cor(data, method = "pearson", nThreads = n_cores)
+    )
 
     ### 2. Spearman correlation
     print_color_word(paste("\u2192", "Calculating Spearman Correlation..."), color = "green")
-    all_association_results[["SpearmanCorrelation"]] <- WGCNA::cor(data, method = "spearman", nThreads = n_cores)
+    SpearmanCorrelation_moni <- peakRAM::peakRAM(
+      all_association_results[["SpearmanCorrelation"]] <- WGCNA::cor(data, method = "spearman", nThreads = n_cores)
+    )
 
     ### 3. Kendall correlation
     if(!requireNamespace("pcaPP")){
@@ -54,29 +58,29 @@ EvalAssociationMethods <- function(SimulationResult,
       utils::install.packages("pcaPP")
     }
     print_color_word(paste("\u2192", "Calculating Kendall Correlation..."), color = "green")
-    all_association_results[["KendallCorrelation"]] <- pcaPP::cor.fk(data)
+    KendallCorrelation_moni <- peakRAM::peakRAM(
+      all_association_results[["KendallCorrelation"]] <- pcaPP::cor.fk(data)
+    )
 
     ### 4. Weighted Rank Correlation
     print_color_word(paste("\u2192", "Calculating Weighted Rank Correlation..."), color = "green")
-    ranks <- apply(data, 2, rank, ties = "average")
-    # weight the ranks
-    # calculate the savage scores
-    n <- nrow(data)
-    reciprocals <- 1 / seq_len(n)
-    savage <- sapply(seq_len(n), function(i){sum(reciprocals[i:n])})
-    # replace each rank with the savage score
-    savages <- ranks
-    savages[] <- savage[ranks]
-    # calculate pearson correlation
-    all_association_results[["WeightedRankCorrelation"]] <- WGCNA::cor(savages, method = "pearson", nThreads = n_cores)
+    WeightedRankCorrelation_moni <- peakRAM::peakRAM(
+      all_association_results <- .WeightedRankCorrelation(all_association_results = all_association_results,
+                                                          data = data,
+                                                          n_cores = n_cores)
+    )
 
     ### 5. Mutual information
     print_color_word(paste("\u2192", "Calculating Mutual Information..."), color = "green")
-    all_association_results[["MutualInfo"]] <- WGCNA::mutualInfoAdjacency(data)$AdjacencyUniversalVersion1
+    MutualInfo_moni <- peakRAM::peakRAM(
+      all_association_results[["MutualInfo"]] <- WGCNA::mutualInfoAdjacency(data)$AdjacencyUniversalVersion1
+    )
 
     ### 6. Cosine distance
     print_color_word(paste("\u2192", "Calculating Cosine Distance..."), color = "green")
-    all_association_results[["CosineCorrelation"]] <- WGCNA::cor(data, method = "pearson", cosine = TRUE, nThreads = n_cores)
+    CosineCorrelation_moni <- peakRAM::peakRAM(
+      all_association_results[["CosineCorrelation"]] <- WGCNA::cor(data, method = "pearson", cosine = TRUE, nThreads = n_cores)
+    )
 
     ### 7. Canberra distance
     if(!requireNamespace("parallelDist")){
@@ -85,33 +89,39 @@ EvalAssociationMethods <- function(SimulationResult,
       utils::install.packages("parallelDist")
     }
     print_color_word(paste("\u2192", "Calculating Canberra Distance..."), color = "green")
-    all_association_results[["CanberraDistance"]] <- -1.0 * parallelDist::parallelDist(t(data),
-                                                                                       method = "canberra",
-                                                                                       threads = n_cores) %>%
-      as.matrix()
-
+    CanberraDistance_moni <- peakRAM::peakRAM(
+      all_association_results[["CanberraDistance"]] <- -1.0 * parallelDist::parallelDist(t(data),
+                                                                                         method = "canberra",
+                                                                                         threads = n_cores) %>%
+        as.matrix()
+    )
 
     ### 8. Euclidean distance
     print_color_word(paste("\u2192", "Calculating Euclidean Distance..."), color = "green")
-    all_association_results[["EuclideanDistance"]] <- -1.0 * parallelDist::parallelDist(t(data),
-                                                                                        method = "euclidean",
-                                                                                        threads = n_cores) %>%
-      as.matrix()
-
+    EuclideanDistance_moni <- peakRAM::peakRAM(
+      all_association_results[["EuclideanDistance"]] <- -1.0 * parallelDist::parallelDist(t(data),
+                                                                                          method = "euclidean",
+                                                                                          threads = n_cores) %>%
+        as.matrix()
+    )
 
     ### 9. Manhattan distance
     print_color_word(paste("\u2192", "Calculating Manhattan Distance..."), color = "green")
-    all_association_results[["ManhattanDistance"]] <- -1.0 * parallelDist::parallelDist(t(data),
-                                                                                        method = "manhattan",
-                                                                                        threads = n_cores) %>%
-      as.matrix()
+    ManhattanDistance_moni <- peakRAM::peakRAM(
+      all_association_results[["ManhattanDistance"]] <- -1.0 * parallelDist::parallelDist(t(data),
+                                                                                          method = "manhattan",
+                                                                                          threads = n_cores) %>%
+        as.matrix()
+    )
 
     ### 10. Hamming distance
     print_color_word(paste("\u2192", "Calculating Hamming Distance..."), color = "green")
-    all_association_results[["HammingDistance"]] <- -1.0 * parallelDist::parallelDist(t(data),
-                                                                                      method = "hamming",
-                                                                                      threads = n_cores) %>%
-      as.matrix()
+    HammingDistance_moni <- peakRAM::peakRAM(
+      all_association_results[["HammingDistance"]] <- -1.0 * parallelDist::parallelDist(t(data),
+                                                                                        method = "hamming",
+                                                                                        threads = n_cores) %>%
+        as.matrix()
+    )
 
     ### 11. Phi S
     if(!requireNamespace("propr")){
@@ -120,11 +130,15 @@ EvalAssociationMethods <- function(SimulationResult,
       devtools::install_github("tpq/propr")
     }
     print_color_word(paste("\u2192", "Calculating Phi..."), color = "green")
-    all_association_results[["Phi_S"]] <- -1.0 * propr::propr(counts = data, metric = "phs")@matrix
+    Phi_S_moni <- peakRAM::peakRAM(
+      all_association_results[["Phi_S"]] <- -1.0 * propr::propr(counts = data, metric = "phs")@matrix
+    )
 
     ### 12. Rho
     print_color_word(paste("\u2192", "Calculating Rho..."), color = "green")
-    all_association_results[["Rho"]] <- propr::propr(counts = data, metric = "rho")@matrix
+    Rho_moni <- peakRAM::peakRAM(
+      all_association_results[["Rho"]] <- propr::propr(counts = data, metric = "rho")@matrix
+    )
 
     #-------- Evaluate Cell Association Results --------#
     trueLabels <- cell_meta[, "group"] %>% as.character()
@@ -134,6 +148,38 @@ EvalAssociationMethods <- function(SimulationResult,
       trueLabels,
       ngroup
     )
+    #-------- Record Resource Occupation During Execution --------#
+    resource_monitering <- tibble::tibble(
+      "Simulation_Method" = method,
+      "Cell_Association_Method" = names(all_association_results),
+      "Time" = c(PearsonCorrelation_moni[, 2],
+                 SpearmanCorrelation_moni[, 2],
+                 KendallCorrelation_moni[, 2],
+                 WeightedRankCorrelation_moni[, 2],
+                 MutualInfo_moni[, 2],
+                 CosineCorrelation_moni[, 2],
+                 CanberraDistance_moni[, 2],
+                 EuclideanDistance_moni[, 2],
+                 ManhattanDistance_moni[, 2],
+                 HammingDistance_moni[, 2],
+                 Phi_S_moni[, 2],
+                 Rho_moni[, 2]),
+      "Memory" = c(PearsonCorrelation_moni[, 4],
+                   SpearmanCorrelation_moni[, 4],
+                   KendallCorrelation_moni[, 4],
+                   WeightedRankCorrelation_moni[, 4],
+                   MutualInfo_moni[, 4],
+                   CosineCorrelation_moni[, 4],
+                   CanberraDistance_moni[, 4],
+                   EuclideanDistance_moni[, 4],
+                   ManhattanDistance_moni[, 4],
+                   HammingDistance_moni[, 4],
+                   Phi_S_moni[, 4],
+                   Rho_moni[, 4]),
+      "Device" = "cpu"
+    )
+    eval_association_table <- eval_association_table %>%
+      dplyr::full_join(resource_monitering, by = c("Simulation_Method", "Cell_Association_Method"))
     eval_association_table
   })
   return(AssociationResults)
@@ -175,3 +221,22 @@ EvalAssociationMethods <- function(SimulationResult,
   })
   return(cell_association_eval_table)
 }
+
+
+.WeightedRankCorrelation <- function(all_association_results,
+                                     data,
+                                     n_cores){
+  ranks <- apply(data, 2, rank, ties = "average")
+  # weight the ranks
+  # calculate the savage scores
+  n <- nrow(data)
+  reciprocals <- 1 / seq_len(n)
+  savage <- sapply(seq_len(n), function(i){sum(reciprocals[i:n])})
+  # replace each rank with the savage score
+  savages <- ranks
+  savages[] <- savage[ranks]
+  # calculate pearson correlation
+  all_association_results[["WeightedRankCorrelation"]] <- WGCNA::cor(savages, method = "pearson", nThreads = n_cores)
+  return(all_association_results)
+}
+
