@@ -42,7 +42,7 @@ Suggests:
     clValid,
     ctc,
     devtools,
-    DR.SC,
+    DR.SC (>= 3.3),
     dropsim,
     dyndimred,
     dyntoy,
@@ -60,9 +60,12 @@ Suggests:
     muscat,
     NbClust,
     parallelDist,
+    pcaPP,
     pROC,
+    propr,
     Rtsne,
     SC3,
+    scales,
     scater,
     scCCESS,
     scDesign,
@@ -77,6 +80,7 @@ Suggests:
     SRTsim,
     tidyr,
     tislingshot,
-    VeloSim
+    VeloSim,
+    WGCNA
 Depends: 
     R (>= 4.0)

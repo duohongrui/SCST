@@ -13,15 +13,21 @@ EvalDEAMethods <- function(
     verbose = TRUE
 ){
   #-------- Check Necessary Information --------#
+  if(length(SimulationResult@simulation_result) == 0){
+    print_color_word("no No simulated data is found.")
+    stop(error_output())
+  }
   validated_methods <- check_info_pre_application(SimulationResult,
                                                   Group = TRUE,
                                                   DEGs = TRUE)
+  count_data <- get_count_data(SimulationResult)
+  cell_meta <- get_cell_meta(SimulationResult)
   #-------- Iterate All Validated Methods --------#
   DEA_results <- purrr::map(1:length(validated_methods), .f = function(x){
     used_method <- validated_methods[x]
     print_color_word(paste("------Perform Defferential Expression Analysis On", used_method), color = "blue")
-    data <- SimulationResult@simulation_result[[used_method]][["count_data"]]
-    col_data <- SimulationResult@simulation_result[[used_method]][["col_meta"]]
+    data <- count_data[[used_method]]
+    col_data <- cell_meta[[used_method]]
     group <- col_data[, "group"] %>% as.character()
     ## Filter
     filter_index <- rowSums(data) > 0
@@ -34,6 +40,8 @@ EvalDEAMethods <- function(
     group_paired <- utils::combn(group_unique, 2)
     ## blank result list
     result_list <- list()
+    ## Monitering resource consumption
+    resource_monitering <- tibble::tibble()
     for(i in 1:ncol(group_paired)){
       group_candidate <- group_paired[, i]
       index <- group %in% group_candidate
@@ -46,130 +54,106 @@ EvalDEAMethods <- function(
         message(paste("Performing DEA with the", i, "/", ncol(group_paired), "paired of groups."))
       }
       ### 1. edgeRQLF
-      if(!requireNamespace("edgeR")){
-        message("edgeR is not installed on your device")
-        message("Installing edgeR...")
-        BiocManager::install("edgeR")
-      }
-      if(verbose){
-        message("Performing DEA using edgeR QLF model")
-      }
-      dge <- edgeR::DGEList(sub_data, group = sub_group)
-      dge <- edgeR::calcNormFactors(dge)
-      design <- stats::model.matrix(~ sub_group)
-      dge <- edgeR::estimateDisp(dge, design = design)
-      fit <- edgeR::glmQLFit(dge, design = design)
-      qlf <- edgeR::glmQLFTest(fit)
-      tt <- edgeR::topTags(qlf, n = Inf)
-      result_list[[sublist_name]][["edgeRQLF"]] <- tt$table
+      edgeRQLF_moni <- peakRAM::peakRAM(
+        result_list <- .edgeRQLF(sub_data = sub_data,
+                                 sub_group = sub_group,
+                                 sublist_name = sublist_name,
+                                 result_list = result_list)
+      )
 
       ### 2. edgeRQLFDetRate
-      if(verbose){
-        message("Performing DEA using edgeR QLF model including the cellular detection rate")
-      }
-      cdr <- scale(colMeans(sub_data > 0))
-      design <- stats::model.matrix(~ cdr + sub_group)
-      dge <- edgeR::estimateDisp(dge, design = design)
-      fit <- edgeR::glmQLFit(dge, design = design)
-      qlf <- edgeR::glmQLFTest(fit)
-      tt <- edgeR::topTags(qlf, n = Inf)
-      result_list[[sublist_name]][["edgeRQLFDetRate"]] <- tt$table
+      edgeRQLFDetRate_moni <- peakRAM::peakRAM(
+        result_list <- .edgeRQLFDetRate(sub_data = sub_data,
+                                        sub_group = sub_group,
+                                        sublist_name = sublist_name,
+                                        result_list = result_list)
+      )
 
       ### 3. MASTcpmDetRate
-      if(!requireNamespace("MAST", quietly = TRUE)){
-        message("Installing MAST...")
-        BiocManager::install("MAST")
-      }
-      if(verbose){
-        message("Performing DEA using MAST including the cellular detection rate with CPM data")
-      }
-      names(sub_group) <- colnames(sub_data)
-      dge <- edgeR::DGEList(counts = sub_data)
-      dge <- edgeR::calcNormFactors(dge)
-      cpms <- edgeR::cpm(dge)
-      sca <- MAST::FromMatrix(exprsArray = log2(cpms + 1),
-                              cData = data.frame(wellKey = names(sub_group),
-                                                 group = sub_group, cdr = cdr))
-      zlmdata <- MAST::zlm(~ cdr + group, sca)
-      mast <- MAST::lrTest(zlmdata, "group")
-      df <- data.frame(PValue = mast[, "hurdle", "Pr(>Chisq)"],
-                       FDR = stats::p.adjust(mast[, "hurdle", "Pr(>Chisq)"], method = "BH"),
-                       row.names = names(mast[, "hurdle", "Pr(>Chisq)"]))
-      result_list[[sublist_name]][["MASTcpmDetRate"]] <- df
+      MASTcpmDetRate_moni <- peakRAM::peakRAM(
+        result_list <- .MASTcpmDetRate(sub_data = sub_data,
+                                       sub_group = sub_group,
+                                       sublist_name = sublist_name,
+                                       result_list = result_list)
+      )
 
       ### 4. MASTcpm
-      if(verbose){
-        message("Performing DEA using MAST with CPM data")
-      }
-      sca <- MAST::FromMatrix(exprsArray = log2(cpms + 1),
-                              cData = data.frame(wellKey = names(sub_group),
-                                                 group = sub_group))
-      zlmdata <- MAST::zlm(~ group, sca)
-      mast <- MAST::lrTest(zlmdata, "group")
-      df <- data.frame(PValue = mast[, "hurdle", "Pr(>Chisq)"],
-                       FDR = stats::p.adjust(mast[, "hurdle", "Pr(>Chisq)"], method = "BH"),
-                       row.names = names(mast[, "hurdle", "Pr(>Chisq)"]))
-      result_list[[sublist_name]][["MASTcpm"]] <- df
+      MASTcpm_moni <- peakRAM::peakRAM(
+        result_list <- .MASTcpm(sub_data = sub_data,
+                                sub_group = sub_group,
+                                sublist_name = sublist_name,
+                                result_list = result_list)
+      )
 
       ### 5. limmatrend
-      if(!requireNamespace("limma", quietly = TRUE)){
-        message("Installing limma...")
-        BiocManager::install("limma")
-      }
-      if(verbose){
-        message("Performing DEA using limma-trend")
-      }
-      design <- stats::model.matrix(~ sub_group)
-      y <- methods::new("EList")
-      y$E <- edgeR::cpm(dge, log = TRUE, prior.count = 3)
-      fit <- limma::lmFit(y, design = design)
-      fit <- limma::eBayes(fit, trend = TRUE, robust = TRUE)
-      tt <- limma::topTable(fit, n = Inf, adjust.method = "BH")
-      colnames(tt)[c(4, 5)] <- c("PValue", "FDR")
-      result_list[[sublist_name]][["limmatrend"]] <- tt
+      limmatrend_moni <- peakRAM::peakRAM(
+        result_list <- .limmatrend(sub_data = sub_data,
+                                   sub_group = sub_group,
+                                   sublist_name = sublist_name,
+                                   result_list = result_list)
+      )
 
       ### 6. limmavoom
-      if(verbose){
-        message("Performing DEA using limma-voom")
-      }
-      design <- model.matrix(~ sub_group)
-      vm <- limma::voom(dge, design = design, plot = FALSE)
-      fit <- limma::lmFit(vm, design = design)
-      fit <- limma::eBayes(fit)
-      tt <- limma::topTable(fit, n = Inf, adjust.method = "BH")
-      colnames(tt)[c(4, 5)] <- c("PValue", "FDR")
-      result_list[[sublist_name]][["limmavoom"]] <- tt
+      limmavoom_moni <- peakRAM::peakRAM(
+        result_list <- .limmavoom(sub_data = sub_data,
+                                  sub_group = sub_group,
+                                  sublist_name = sublist_name,
+                                  result_list = result_list)
+      )
 
       ### 7. ttest
-      if(verbose){
-        message("Performing DEA using t-test")
-      }
-      timing <- system.time({
-        logcpms <- log2(cpms + 1)
-        idx <- seq_len(nrow(logcpms))
-        names(idx) <- rownames(logcpms)
-        ttest_p <- sapply(idx, function(i) {
-          stats::t.test(logcpms[i, ] ~ sub_group)$p.value
-        })
-      })
-      df <- data.frame(PValue = ttest_p,
-                       FDR = stats::p.adjust(ttest_p, method = "BH"),
-                       row.names = names(ttest_p))
-      result_list[[sublist_name]][["ttest"]] <- df
+      ttest_moni <- peakRAM::peakRAM(
+        result_list <- .ttest(sub_data = sub_data,
+                              sub_group = sub_group,
+                              sublist_name = sublist_name,
+                              result_list = result_list)
+      )
 
       ### 8. wilcox
-      if(verbose){
-        message("Performing DEA using wilcox-test")
-      }
-      wilcox_p <- sapply(idx, function(i) {
-        stats::wilcox.test(logcpms[i, ] ~ sub_group)$p.value
-      })
-      df <- data.frame(PValue = wilcox_p,
-                       FDR = stats::p.adjust(wilcox_p, method = "BH"),
-                       row.names = names(wilcox_p))
-      result_list[[sublist_name]][["wilcox"]] <- df
+      wilcox_moni <- peakRAM::peakRAM(
+        result_list <- .wilcox(sub_data = sub_data,
+                               sub_group = sub_group,
+                               sublist_name = sublist_name,
+                               result_list = result_list)
+      )
+      #-------- Record Resource Occupation During Execution --------#
+      resource_monitering_tmp <- tibble::tibble(
+        "Simulation_Method" = used_method,
+        "DEA_Method" = c("edgeRQLF", "edgeRQLFDetRate", "MASTcpmDetRate", "MASTcpm", "limmatrend", "limmavoom", "ttest", "wilcox"),
+        "Time" = c(edgeRQLF_moni[, 2],
+                   edgeRQLFDetRate_moni[, 2],
+                   MASTcpmDetRate_moni[, 2],
+                   MASTcpm_moni[, 2],
+                   limmatrend_moni[, 2],
+                   limmavoom_moni[, 2],
+                   ttest_moni[, 2],
+                   wilcox_moni[, 2]),
+        "Memory" = c(edgeRQLF_moni[, 4],
+                     edgeRQLFDetRate_moni[, 4],
+                     MASTcpmDetRate_moni[, 4],
+                     MASTcpm_moni[, 4],
+                     limmatrend_moni[, 4],
+                     limmavoom_moni[, 4],
+                     ttest_moni[, 4],
+                     wilcox_moni[, 4]),
+        "Device" = "cpu",
+        "Group_pair" = as.character(i))
+      # print(resource_monitering_tmp)
+      resource_monitering <- rbind(resource_monitering, resource_monitering_tmp)
+      # print(resource_monitering)
     }
-    result_list
+    resource_monitering <- resource_monitering %>%
+      dplyr::group_by(Simulation_Method, DEA_Method, Device) %>%
+      dplyr::summarise(
+        "Time" = mean(Time, na.rm = TRUE),
+        "Memory" = mean(Memory, na.rm = TRUE)
+      ) %>%
+      dplyr::ungroup() %>%
+      dplyr::relocate("Device", .after = "Memory")
+      # dplyr::relocate("DEA_Method", .before = "Time") %>%
+      # dplyr::relocate("Simulation_Method", .before = "DEA_Method")
+    list("result_list" = result_list,
+         "resource_monitering" = resource_monitering)
   })
   names(DEA_results) <- validated_methods
 
@@ -178,8 +162,13 @@ EvalDEAMethods <- function(
     SimulationResult = SimulationResult,
     DEAResult = DEA_results
   )
+  #-------- Extract Resource Consumption Information --------#
+  resource_monitering <- purrr::map_dfr(DEA_results, .f = function(x){
+    x[["resource_monitering"]]
+  })
   #-------- Return Results --------#
-  return(Eval_DEGs_validity)
+  return(list("eval_DEGs_validity" = Eval_DEGs_validity,
+              "resource_monitering" = resource_monitering))
 }
 
 
@@ -195,7 +184,7 @@ EvalDEAMethods <- function(
 
   DEGs_evaluation_results <- purrr::map_dfr(.x = validated_methods, .f = function(used_method){
     print_color_word(paste("------Perform Evaluation of DEGs On", used_method), color = "blue")
-    predicted_result <- DEAResult[[used_method]]
+    predicted_result <- DEAResult[[used_method]][["result_list"]]
     method_count <- counts_data[[used_method]]
     method_col_data <- col_data[[used_method]]
     method_row_data <- row_data[[used_method]]
@@ -371,4 +360,178 @@ EvalDEAMethods <- function(
     all_results
   })
   return(DEGs_evaluation_results)
+}
+
+
+.edgeRQLF <- function(sub_data,
+                      sub_group,
+                      sublist_name,
+                      result_list){
+  if(!requireNamespace("edgeR")){
+    message("edgeR is not installed on your device")
+    message("Installing edgeR...")
+    BiocManager::install("edgeR")
+  }
+  print_color_word(paste("\u2192", "edgeRQLF is running..."), color = "green")
+  dge <- edgeR::DGEList(sub_data, group = sub_group)
+  dge <- edgeR::calcNormFactors(dge)
+  design <- stats::model.matrix(~ sub_group)
+  dge <- edgeR::estimateDisp(dge, design = design)
+  fit <- edgeR::glmQLFit(dge, design = design)
+  qlf <- edgeR::glmQLFTest(fit)
+  tt <- edgeR::topTags(qlf, n = Inf)
+  result_list[[sublist_name]][["edgeRQLF"]] <- tt$table
+  return(result_list)
+}
+
+.edgeRQLFDetRate <- function(sub_data,
+                             sub_group,
+                             sublist_name,
+                             result_list){
+  print_color_word(paste("\u2192", "edgeRQLFDetRate is running..."), color = "green")
+  dge <- edgeR::DGEList(sub_data, group = sub_group)
+  dge <- edgeR::calcNormFactors(dge)
+  cdr <- scale(colMeans(sub_data > 0))
+  design <- stats::model.matrix(~ cdr + sub_group)
+  dge <- edgeR::estimateDisp(dge, design = design)
+  fit <- edgeR::glmQLFit(dge, design = design)
+  qlf <- edgeR::glmQLFTest(fit)
+  tt <- edgeR::topTags(qlf, n = Inf)
+  result_list[[sublist_name]][["edgeRQLFDetRate"]] <- tt$table
+  return(result_list)
+}
+
+
+.MASTcpmDetRate <- function(sub_data,
+                            sub_group,
+                            sublist_name,
+                            result_list){
+  if(!requireNamespace("MAST", quietly = TRUE)){
+    message("Installing MAST...")
+    BiocManager::install("MAST")
+  }
+  print_color_word(paste("\u2192", "MASTcpmDetRate is running..."), color = "green")
+  names(sub_group) <- colnames(sub_data)
+  dge <- edgeR::DGEList(counts = sub_data)
+  dge <- edgeR::calcNormFactors(dge)
+  cdr <- scale(colMeans(sub_data > 0))
+  cpms <- edgeR::cpm(dge)
+  sca <- MAST::FromMatrix(exprsArray = log2(cpms + 1),
+                          cData = data.frame(wellKey = names(sub_group),
+                                             group = sub_group, cdr = cdr))
+  zlmdata <- MAST::zlm(~ cdr + group, sca)
+  mast <- MAST::lrTest(zlmdata, "group")
+  df <- data.frame(PValue = mast[, "hurdle", "Pr(>Chisq)"],
+                   FDR = stats::p.adjust(mast[, "hurdle", "Pr(>Chisq)"], method = "BH"),
+                   row.names = names(mast[, "hurdle", "Pr(>Chisq)"]))
+  result_list[[sublist_name]][["MASTcpmDetRate"]] <- df
+  return(result_list)
+}
+
+
+
+.MASTcpm <- function(sub_data,
+                     sub_group,
+                     sublist_name,
+                     result_list){
+  print_color_word(paste("\u2192", "MASTcpm is running..."), color = "green")
+  names(sub_group) <- colnames(sub_data)
+  dge <- edgeR::DGEList(counts = sub_data)
+  dge <- edgeR::calcNormFactors(dge)
+  cpms <- edgeR::cpm(dge)
+  sca <- MAST::FromMatrix(exprsArray = log2(cpms + 1),
+                          cData = data.frame(wellKey = names(sub_group),
+                                             group = sub_group))
+  zlmdata <- MAST::zlm(~ group, sca)
+  mast <- MAST::lrTest(zlmdata, "group")
+  df <- data.frame(PValue = mast[, "hurdle", "Pr(>Chisq)"],
+                   FDR = stats::p.adjust(mast[, "hurdle", "Pr(>Chisq)"], method = "BH"),
+                   row.names = names(mast[, "hurdle", "Pr(>Chisq)"]))
+  result_list[[sublist_name]][["MASTcpm"]] <- df
+  return(result_list)
+}
+
+
+.limmatrend <- function(sub_data,
+                        sub_group,
+                        sublist_name,
+                        result_list){
+  if(!requireNamespace("limma", quietly = TRUE)){
+    message("Installing limma...")
+    BiocManager::install("limma")
+  }
+  print_color_word(paste("\u2192", "limmatrend is running..."), color = "green")
+  dge <- edgeR::DGEList(counts = sub_data)
+  dge <- edgeR::calcNormFactors(dge)
+  design <- stats::model.matrix(~ sub_group)
+  y <- methods::new("EList")
+  y$E <- edgeR::cpm(dge, log = TRUE, prior.count = 3)
+  fit <- limma::lmFit(y, design = design)
+  fit <- limma::eBayes(fit, trend = TRUE, robust = TRUE)
+  tt <- limma::topTable(fit, n = Inf, adjust.method = "BH")
+  colnames(tt)[c(4, 5)] <- c("PValue", "FDR")
+  result_list[[sublist_name]][["limmatrend"]] <- tt
+  return(result_list)
+}
+
+
+.limmavoom <- function(sub_data,
+                       sub_group,
+                       sublist_name,
+                       result_list){
+  print_color_word(paste("\u2192", "limmavoom is running..."), color = "green")
+  dge <- edgeR::DGEList(counts = sub_data)
+  dge <- edgeR::calcNormFactors(dge)
+  design <- model.matrix(~ sub_group)
+  vm <- limma::voom(dge, design = design, plot = FALSE)
+  fit <- limma::lmFit(vm, design = design)
+  fit <- limma::eBayes(fit)
+  tt <- limma::topTable(fit, n = Inf, adjust.method = "BH")
+  colnames(tt)[c(4, 5)] <- c("PValue", "FDR")
+  result_list[[sublist_name]][["limmavoom"]] <- tt
+  return(result_list)
+}
+
+
+.ttest <- function(sub_data,
+                   sub_group,
+                   sublist_name,
+                   result_list){
+  print_color_word(paste("\u2192", "ttest is running..."), color = "green")
+  dge <- edgeR::DGEList(counts = sub_data)
+  dge <- edgeR::calcNormFactors(dge)
+  cpms <- edgeR::cpm(dge)
+  logcpms <- log2(cpms + 1)
+  idx <- seq_len(nrow(logcpms))
+  names(idx) <- rownames(logcpms)
+  ttest_p <- sapply(idx, function(i) {
+    stats::t.test(logcpms[i, ] ~ sub_group)$p.value
+  })
+  df <- data.frame(PValue = ttest_p,
+                   FDR = stats::p.adjust(ttest_p, method = "BH"),
+                   row.names = names(ttest_p))
+  result_list[[sublist_name]][["ttest"]] <- df
+  return(result_list)
+}
+
+
+.wilcox <- function(sub_data,
+                    sub_group,
+                    sublist_name,
+                    result_list){
+  print_color_word(paste("\u2192", "wilcox is running..."), color = "green")
+  dge <- edgeR::DGEList(counts = sub_data)
+  dge <- edgeR::calcNormFactors(dge)
+  cpms <- edgeR::cpm(dge)
+  logcpms <- log2(cpms + 1)
+  idx <- seq_len(nrow(logcpms))
+  names(idx) <- rownames(logcpms)
+  wilcox_p <- sapply(idx, function(i) {
+    stats::wilcox.test(logcpms[i, ] ~ sub_group)$p.value
+  })
+  df <- data.frame(PValue = wilcox_p,
+                   FDR = stats::p.adjust(wilcox_p, method = "BH"),
+                   row.names = names(wilcox_p))
+  result_list[[sublist_name]][["wilcox"]] <- df
+  return(result_list)
 }

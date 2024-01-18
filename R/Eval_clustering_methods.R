@@ -73,6 +73,7 @@ EvaluateAppScenario <- function(
 #' @importFrom stats prcomp kmeans
 #' @importFrom tibble tibble
 #' @importFrom Seurat AddMetaData
+#' @importFrom peakRAM peakRAM
 #'
 EvalClusteringMethods <- function(SimulationResult,
                                   min_cells = 0,
@@ -94,12 +95,13 @@ EvalClusteringMethods <- function(SimulationResult,
     stop(error_output())
   }
   validated_methods <- check_info_pre_application(SimulationResult = SimulationResult, Group = TRUE)
-
+  count_data <- get_count_data(SimulationResult)
+  cell_meta <- get_cell_meta(SimulationResult)
   ### Iterate all simulation methods and perform clustering and sequent evaluation
   ClusteringResults <- purrr::map(validated_methods, .f = function(method){
     #-------- Filtering --------#
-    data <- SimulationResult@simulation_result[[method]][["count_data"]]
-    col_data <- SimulationResult@simulation_result[[method]][["col_meta"]]
+    data <- count_data[[method]]
+    col_data <- cell_meta[[method]]
     if(min_total_counts != 0){
       filter_index <- colSums(data) >= min_total_counts
       data <- data[, filter_index]
@@ -108,10 +110,11 @@ EvalClusteringMethods <- function(SimulationResult,
     if(min_counts_per_gene != 0){
       data <- data[rowSums(data) >= min_counts_per_gene, ]
     }
-    #-------- Methods --------#
+
     print_color_word(paste("------Perform Clustering On", method), color = "blue")
-    ### 1. Seurat_Louvain
+    #-------- Proprecessing --------#
     seurat <- data %>%
+      methods::as("dgCMatrix") %>%
       Seurat::CreateSeuratObject(min.cells = min_cells,
                                  min.features = min_genes,
                                  project = "simdata",
@@ -145,41 +148,7 @@ EvalClusteringMethods <- function(SimulationResult,
                      seed.use = seed,
                      verbose = FALSE) %>%
       Seurat::FindNeighbors(verbose = FALSE)
-    resolution <- .find_resolution(seurat,
-                                   groups = ngroups,
-                                   algorithm = 1,
-                                   seed = seed)
-    seurat_louvain <- Seurat::FindClusters(object = seurat,
-                                           algorithm = 1,
-                                           resolution = resolution,
-                                           random.seed = seed,
-                                           verbose = FALSE)
-    seurat_louvain_result <- as.numeric(seurat_louvain@meta.data$seurat_clusters)
-    names(seurat_louvain_result) <- colnames(seurat)
-    ### 2. Seurat_Leiden
-    all_packages <- reticulate::py_list_packages()
-    if("leidenalg" %in% all_packages$package){
-      resolution <- .find_resolution(seurat,
-                                     groups = ngroups,
-                                     algorithm = 4,
-                                     seed = seed)
-      seurat_leiden <- Seurat::FindClusters(object = seurat,
-                                            algorithm = 4,
-                                            resolution = resolution,
-                                            random.seed = seed,
-                                            verbose = FALSE)
-      seurat_leiden_result <- as.numeric(seurat_leiden@meta.data$seurat_clusters)
-      names(seurat_leiden_result) <- colnames(seurat)
-    }else{
-      print_color_word("leidenalg python module has not been installed, so Seurat_Leiden will not be used for clustering", "yellow")
-      seurat_leiden_result <- NULL
-    }
-    ### 3. SC3
-    if(!requireNamespace("SC3")){
-      message("SC3 is not installed on your device")
-      message("Installing SC3...")
-      BiocManager::install("SC3")
-    }
+    ### SingleCellExperiment Object
     sce <- SingleCellExperiment::SingleCellExperiment(
       assays = list(
         counts = as.matrix(data),
@@ -188,167 +157,90 @@ EvalClusteringMethods <- function(SimulationResult,
       colData = col_data
     )
     SummarizedExperiment::rowData(sce)$feature_symbol <- rownames(sce)
-    SC3_result <- SC3::sc3(sce,
-                           pct_dropout_min = 5,
-                           pct_dropout_max = 95,
-                           biology = FALSE,
-                           svm_max = 1e6,
-                           k_estimator = FALSE,
-                           ks = ngroups,
-                           gene_filter = FALSE,
-                           n_cores = n_cores,
-                           rand_seed = seed)
-    SC3_cluster <- as.numeric(SingleCellExperiment::colData(SC3_result)[, paste0("sc3_", ngroups, "_clusters")])
-    names(SC3_cluster) <- colnames(sce)
+
+    #-------- Methods --------#
+    ### 1. Seurat_Louvain
+    seurat_louvain_moni <- peakRAM::peakRAM(
+      seurat_louvain_result <- .seurat_louvain_clustering(seurat = seurat,
+                                                          ngroups = ngroups,
+                                                          seed = seed)
+    )
+    ### 2. Seurat_Leiden
+    seurat_leiden_moni <- peakRAM::peakRAM(
+      seurat_leiden_result <- .seurat_leiden_clustering(seurat = seurat,
+                                                        ngroups = ngroups,
+                                                        seed = seed)
+    )
+    ### 3. SC3
+    SC3_moni <- peakRAM::peakRAM(
+      SC3_cluster <- .SC3(sce = sce,
+                          ngroups = ngroups,
+                          n_cores = n_cores,
+                          seed = seed)
+    )
     ### 4. SC3_SVM
-    SC3_SVM_result <- SC3::sc3(sce,
-                               pct_dropout_min = 5,
-                               pct_dropout_max = 95,
-                               biology = FALSE,
-                               svm_max = 1,
-                               svm_num_cells = round(ncol(sce) * 0.8),
-                               k_estimator = FALSE,
-                               ks = ngroups,
-                               gene_filter = FALSE,
-                               n_cores = n_cores,
-                               rand_seed = seed)
-    SC3_SVM_result <- SC3::sc3_run_svm(SC3_SVM_result, ks = ngroups)
-    SC3_SVM_cluster <- as.numeric(SingleCellExperiment::colData(SC3_SVM_result)[, paste0("sc3_", ngroups, "_clusters")])
-    names(SC3_SVM_cluster) <- colnames(sce)
-
+    SC3_SVM_moni <- peakRAM::peakRAM(
+      SC3_SVM_cluster <- .SC3_SVM(sce = sce,
+                                  ngroups = ngroups,
+                                  n_cores = n_cores,
+                                  seed = seed)
+    )
     ### 5. scCCESS-kmeans
-    if(!requireNamespace("scCCESS")){
-      message("scCCESS is not installed on your device")
-      message("Installing scCCESS...")
-      devtools::install_github('PYangLab/scCCESS')
-    }
-    scCCESS_kmeans_result <- scCCESS::ensemble_cluster(
-      data,
-      seed = seed,
-      cluster_func = function(x) {
-        set.seed(seed)
-        kmeans(x, centers = ngroups)
-      },
-      cores = n_cores,
-      genes_as_rows = T,
-      ensemble_sizes = 10,
-      verbose = 0,
-      scale = F,
-      learning_rate = learning_rate,
-      batch_size = batch_size,
-      epochs = epochs
+    scCCESS_Kmeans_moni <- peakRAM::peakRAM(
+      scCCESS_kmeans_result <- .scCCESS_kmeans(data = data,
+                                               ngroups = ngroups,
+                                               n_cores = n_cores,
+                                               epochs = epochs,
+                                               learning_rate = learning_rate,
+                                               batch_size = batch_size,
+                                               seed = seed)
     )
-
     ### 6. scCCESS-SIMLR
-    if(!requireNamespace("SIMLR")){
-      message("SIMLR is not installed on your device")
-      message("Installing SIMLR...")
-      devtools::install_github("yulijia/SIMLR", ref = "master")
-    }
-    scCCESS_SIMLR_result <- scCCESS::ensemble_cluster(
-      data,
-      seed = seed,
-      cluster_func = function(x) {
-        set.seed(seed)
-        SIMLR::SIMLR_Large_Scale(t(x), c = ngroups, kk = PCs)
-      },
-      cores = n_cores,
-      genes_as_rows = T,
-      ensemble_sizes = 10,
-      verbose = 0,
-      scale = F,
-      learning_rate = learning_rate,
-      batch_size = batch_size,
-      epochs = epochs
+    scCCESS_SIMLR_moni <- peakRAM::peakRAM(
+      scCCESS_SIMLR_result <- .scCCESS_SIMLR(data = data,
+                                             ngroups = ngroups,
+                                             PCs = PCs,
+                                             n_cores = n_cores,
+                                             epochs = epochs,
+                                             learning_rate = learning_rate,
+                                             batch_size = batch_size,
+                                             seed = seed)
     )
-    names(scCCESS_SIMLR_result) <- colnames(data)
-
     ### 7. RtsneKmeans
-    if(!requireNamespace("Rtsne")){
-      message("Rtsne is not installed on your device")
-      message("Installing Rtsne")
-      utils::install.packages("Rtsne")
-    }
-    rtsne <- Rtsne::Rtsne(X = t(data),
-                          dims = tsne_dims,
-                          perplexity = perplexity,
-                          pca = TRUE,
-                          initial_dims = PCs,
-                          check_duplicates = FALSE)
-    RtsneKmeans_result <- stats::kmeans(rtsne$Y, centers = ngroups)$cluster
-    names(RtsneKmeans_result) <- colnames(data)
-
+    RtsneKmeans_moni <- peakRAM::peakRAM(
+      RtsneKmeans_result <- .RtsneKmeans(data = data,
+                                         tsne_dims = tsne_dims,
+                                         perplexity = perplexity,
+                                         PCs = PCs,
+                                         ngroups = ngroups)
+    )
     ### 8. PCAKmeans
-    pca <- stats::prcomp(t(data), center = TRUE, scale. = FALSE, rank. = PCs)
-    PCAKmeans_result <- kmeans(pca$x, centers = ngroups)$cluster
-
+    PCAKmeans_moni <- peakRAM::peakRAM(
+      PCAKmeans_result <- .PCAKmeans(data = data,
+                                     PCs = PCs,
+                                     ngroups = ngroups)
+    )
     ### 9. scLCA
-    if(!requireNamespace("scLCA")){
-      message("scLCA is not installed on your device")
-      message("Installing scLCA")
-      devtools::install_bitbucket("scLCA/single_cell_lca", ref = "master")
-    }
-    require(scLCA)
-    scLCA_result <- scLCA::myscLCA(datmatrix = data,
-                                   clust.max = ngroups,
-                                   datBatch = NULL)
-    scLCA_result <- scLCA_result[[1]]
-    names(scLCA_result) <- colnames(data)
-
+    scLCA_moni <- peakRAM::peakRAM(
+      scLCA_result <- .scLCA(data = data,
+                             ngroups = ngroups)
+    )
     ### 10. CIDR
-    if(!requireNamespace("cidr")){
-      message("CIDR is not installed on your device")
-      message("Installing CIDR")
-      devtools::install_github("VCCRI/CIDR")
-    }
-    sData <- data %>%
-      cidr::scDataConstructor(tagType = "raw") %>%
-      cidr::determineDropoutCandidates() %>%
-      cidr::wThreshold() %>%
-      cidr::scDissim(threads = n_cores) %>%
-      cidr::scPCA(plotPC = FALSE) %>%
-      cidr::nPC()
-    ## Cluster with preset number of clusters
-    sDataC <- cidr::scCluster(object = sData,
-                              nCluster = ngroups,
-                              nPC = sData@nPC,
-                              cMethod = "ward.D2")
-    CIDR_result <- sDataC@clusters
-    names(CIDR_result) <- colnames(sDataC@tags)
-
+    CIDR_moni <- peakRAM::peakRAM(
+      CIDR_result <- .CIDR(data = data,
+                           ngroups = ngroups,
+                           n_cores = n_cores)
+    )
     ### 11. Monocle3
-    if(!requireNamespace("monocle3")){
-      message("monocle3 is not installed on your device")
-      message("Installing monocle3")
-      devtools::install_github('cole-trapnell-lab/monocle3')
-    }
-    gene_metadata <- data.frame("gene_short_name" = rownames(data),
-                                row.names = rownames(data))
-
-    cds <- data %>%
-      monocle3::new_cell_data_set(cell_metadata = col_data,
-                                  gene_metadata = gene_metadata) %>%
-      monocle3::preprocess_cds(method = "PCA",
-                               num_dim = PCs,
-                               verbose = verbose) %>%
-      monocle3::reduce_dimension(reduction_method = "UMAP",
-                                 preprocess_method = "PCA",
-                                 verbose = verbose,
-                                 cores = n_cores)
-    resolution <- .find_resolution(cds,
-                                   groups = ngroups,
-                                   algorithm = 4,
-                                   seed = seed)
-    cds <- monocle3::cluster_cells(cds,
-                                   reduction_method = "UMAP",
-                                   k = 20,
-                                   num_iter = 10,
-                                   resolution = resolution,
-                                   cluster_method = "leiden",
-                                   verbose = FALSE)
-    monocle3_result <- monocle3::clusters(cds) %>% as.numeric()
-    names(monocle3_result) <- colnames(cds)
-
+    Monocle3_moni <- peakRAM::peakRAM(
+      monocle3_result <- .Monocle3(data = data,
+                                   col_data = col_data,
+                                   ngroups = ngroups,
+                                   PCs = PCs,
+                                   n_cores = n_cores,
+                                   seed = seed,
+                                   verbose = verbose)
+    )
     ### collect all clustering methods
     all_clustering_results <- list(
       "seurat-louvain" = seurat_louvain_result,
@@ -371,12 +263,41 @@ EvalClusteringMethods <- function(SimulationResult,
       trueLabels,
       data,
       method)
+    #-------- Record Resource Occupation During Execution --------#
+    resource_monitering <- tibble::tibble(
+      "Simulation_Method" = method,
+      "Clustering_Method" = names(all_clustering_results),
+      "Time" = c(seurat_louvain_moni[, 2],
+                 seurat_leiden_moni[, 2],
+                 SC3_moni[, 2],
+                 SC3_SVM_moni[, 2],
+                 scCCESS_Kmeans_moni[, 2],
+                 scCCESS_SIMLR_moni[, 2],
+                 RtsneKmeans_moni[, 2],
+                 PCAKmeans_moni[, 2],
+                 scLCA_moni[, 2],
+                 CIDR_moni[, 2],
+                 Monocle3_moni[, 2]),
+      "Memory" = c(seurat_louvain_moni[, 4],
+                   seurat_leiden_moni[, 4],
+                   SC3_moni[, 4],
+                   SC3_SVM_moni[, 4],
+                   scCCESS_Kmeans_moni[, 4],
+                   scCCESS_SIMLR_moni[, 4],
+                   RtsneKmeans_moni[, 4],
+                   PCAKmeans_moni[, 4],
+                   scLCA_moni[, 4],
+                   CIDR_moni[, 4],
+                   Monocle3_moni[, 4]),
+      "Device" = "cpu"
+    )
     #-------- Add Clustering Results to Seurat For Visualization --------#
     all_clustering_results <- lapply(all_clustering_results, FUN = function(x){as.character(x)})
     seurat <- Seurat::AddMetaData(seurat, all_clustering_results)
     #-------- Outcome of one simulation method --------#
     list("seurat" = seurat,
-         "eval_clustering_table" = eval_clustering_table)
+         "eval_clustering_table" = eval_clustering_table,
+         "resource_monitering" = resource_monitering)
   })
   names(ClusteringResults) <- validated_methods
   return(ClusteringResults)
@@ -487,3 +408,280 @@ EvalClusteringMethods <- function(SimulationResult,
 }
 
 
+.seurat_louvain_clustering <- function(seurat,
+                                       ngroups,
+                                       seed){
+  print_color_word(paste("\n \u2192", "Seurat Louvain is running..."), color = "green")
+  resolution <- .find_resolution(seurat,
+                                 groups = ngroups,
+                                 algorithm = 1,
+                                 seed = seed)
+  seurat_louvain <- Seurat::FindClusters(object = seurat,
+                                         algorithm = 1,
+                                         resolution = resolution,
+                                         random.seed = seed,
+                                         verbose = FALSE)
+  seurat_louvain_result <- as.numeric(seurat_louvain@meta.data$seurat_clusters)
+  names(seurat_louvain_result) <- colnames(seurat)
+  return(seurat_louvain_result)
+}
+
+.seurat_leiden_clustering <- function(seurat,
+                                      ngroups,
+                                      seed){
+  print_color_word(paste("\n \u2192", "Seurat Leiden is running..."), color = "green")
+  all_packages <- reticulate::py_list_packages()
+  if("leidenalg" %in% all_packages$package){
+    resolution <- .find_resolution(seurat,
+                                   groups = ngroups,
+                                   algorithm = 4,
+                                   seed = seed)
+    seurat_leiden <- Seurat::FindClusters(object = seurat,
+                                          algorithm = 4,
+                                          resolution = resolution,
+                                          random.seed = seed,
+                                          verbose = FALSE)
+    seurat_leiden_result <- as.numeric(seurat_leiden@meta.data$seurat_clusters)
+    names(seurat_leiden_result) <- colnames(seurat)
+  }else{
+    print_color_word("leidenalg python module has not been installed, so Seurat_Leiden will not be used for clustering", "yellow")
+    seurat_leiden_result <- NULL
+  }
+  return(seurat_leiden_result)
+}
+
+.SC3 <- function(sce,
+                 ngroups,
+                 n_cores,
+                 seed){
+  print_color_word(paste("\n \u2192", "SC3 is running..."), color = "green")
+  if(!requireNamespace("SC3")){
+    message("SC3 is not installed on your device")
+    message("Installing SC3...")
+    BiocManager::install("SC3")
+  }
+  SC3_result <- SC3::sc3(sce,
+                         pct_dropout_min = 5,
+                         pct_dropout_max = 95,
+                         biology = FALSE,
+                         svm_max = 1e6,
+                         k_estimator = FALSE,
+                         ks = ngroups,
+                         gene_filter = FALSE,
+                         n_cores = n_cores,
+                         rand_seed = seed)
+  SC3_cluster <- as.numeric(SingleCellExperiment::colData(SC3_result)[, paste0("sc3_", ngroups, "_clusters")])
+  names(SC3_cluster) <- colnames(sce)
+  return(SC3_cluster)
+}
+
+.SC3_SVM <- function(sce,
+                     ngroups,
+                     n_cores,
+                     seed){
+  print_color_word(paste("\n \u2192", "SC3 SVM is running..."), color = "green")
+  SC3_SVM_result <- SC3::sc3(sce,
+                             pct_dropout_min = 5,
+                             pct_dropout_max = 95,
+                             biology = FALSE,
+                             svm_max = 1,
+                             svm_num_cells = round(ncol(sce) * 0.8),
+                             k_estimator = FALSE,
+                             ks = ngroups,
+                             gene_filter = FALSE,
+                             n_cores = n_cores,
+                             rand_seed = seed)
+  SC3_SVM_result <- SC3::sc3_run_svm(SC3_SVM_result, ks = ngroups)
+  SC3_SVM_cluster <- as.numeric(SingleCellExperiment::colData(SC3_SVM_result)[, paste0("sc3_", ngroups, "_clusters")])
+  names(SC3_SVM_cluster) <- colnames(sce)
+  return(SC3_SVM_cluster)
+}
+
+
+.scCCESS_kmeans <- function(data,
+                            ngroups,
+                            n_cores,
+                            epochs,
+                            learning_rate,
+                            batch_size,
+                            seed){
+  print_color_word(paste("\n \u2192", "scCCESS-Kmeans is running..."), color = "green")
+  if(!requireNamespace("scCCESS")){
+    message("scCCESS is not installed on your device")
+    message("Installing scCCESS...")
+    devtools::install_github('PYangLab/scCCESS')
+  }
+  scCCESS_kmeans_result <- scCCESS::ensemble_cluster(
+    data,
+    seed = seed,
+    cluster_func = function(x) {
+      set.seed(seed)
+      kmeans(x, centers = ngroups)
+    },
+    cores = n_cores,
+    genes_as_rows = T,
+    ensemble_sizes = 10,
+    verbose = 0,
+    scale = F,
+    learning_rate = learning_rate,
+    batch_size = batch_size,
+    epochs = epochs
+  )
+  return(scCCESS_kmeans_result)
+}
+
+
+.scCCESS_SIMLR <- function(data,
+                           ngroups,
+                           PCs,
+                           n_cores,
+                           epochs,
+                           learning_rate,
+                           batch_size,
+                           seed){
+  print_color_word(paste("\n \u2192", "scCCESS-SIMLR is running..."), color = "green")
+  if(!requireNamespace("SIMLR")){
+    message("SIMLR is not installed on your device")
+    message("Installing SIMLR...")
+    devtools::install_github("yulijia/SIMLR", ref = "master")
+  }
+  scCCESS_SIMLR_result <- scCCESS::ensemble_cluster(
+    data,
+    seed = seed,
+    cluster_func = function(x) {
+      set.seed(seed)
+      SIMLR::SIMLR_Large_Scale(t(x), c = ngroups, kk = PCs)
+    },
+    cores = n_cores,
+    genes_as_rows = T,
+    ensemble_sizes = 10,
+    verbose = 0,
+    scale = F,
+    learning_rate = learning_rate,
+    batch_size = batch_size,
+    epochs = epochs
+  )
+  names(scCCESS_SIMLR_result) <- colnames(data)
+  return(scCCESS_SIMLR_result)
+}
+
+
+.RtsneKmeans <- function(data,
+                         tsne_dims,
+                         perplexity,
+                         PCs,
+                         ngroups){
+  print_color_word(paste("\n \u2192", "RtsneKmeans is running..."), color = "green")
+  if(!requireNamespace("Rtsne")){
+    message("Rtsne is not installed on your device")
+    message("Installing Rtsne")
+    utils::install.packages("Rtsne")
+  }
+  rtsne <- Rtsne::Rtsne(X = t(data),
+                        dims = tsne_dims,
+                        perplexity = perplexity,
+                        pca = TRUE,
+                        initial_dims = PCs,
+                        check_duplicates = FALSE)
+  RtsneKmeans_result <- stats::kmeans(rtsne$Y, centers = ngroups)$cluster
+  names(RtsneKmeans_result) <- colnames(data)
+  return(RtsneKmeans_result)
+}
+
+
+.PCAKmeans <- function(data,
+                       PCs,
+                       ngroups){
+  print_color_word(paste("\n \u2192", "PCAKmeans is running..."), color = "green")
+  pca <- stats::prcomp(t(data), center = TRUE, scale. = FALSE, rank. = PCs)
+  PCAKmeans_result <- kmeans(pca$x, centers = ngroups)$cluster
+  return(PCAKmeans_result)
+}
+
+
+.scLCA <- function(data,
+                   ngroups){
+  print_color_word(paste("\n \u2192", "scLCA is running..."), color = "green")
+  if(!requireNamespace("scLCA")){
+    message("scLCA is not installed on your device")
+    message("Installing scLCA")
+    devtools::install_bitbucket("scLCA/single_cell_lca", ref = "master")
+  }
+  require(scLCA)
+  scLCA_result <- scLCA::myscLCA(datmatrix = data,
+                                 clust.max = ngroups,
+                                 datBatch = NULL)
+  scLCA_result <- scLCA_result[[1]]
+  names(scLCA_result) <- colnames(data)
+  return(scLCA_result)
+}
+
+
+.CIDR <- function(data,
+                  ngroups,
+                  n_cores){
+  print_color_word(paste("\n \u2192", "CIDR is running..."), color = "green")
+  if(!requireNamespace("cidr")){
+    message("CIDR is not installed on your device")
+    message("Installing CIDR")
+    devtools::install_github("VCCRI/CIDR")
+  }
+  sData <- data %>%
+    cidr::scDataConstructor(tagType = "raw") %>%
+    cidr::determineDropoutCandidates() %>%
+    cidr::wThreshold() %>%
+    cidr::scDissim(threads = n_cores) %>%
+    cidr::scPCA(plotPC = FALSE) %>%
+    cidr::nPC()
+  ## Cluster with preset number of clusters
+  sDataC <- cidr::scCluster(object = sData,
+                            nCluster = ngroups,
+                            nPC = sData@nPC,
+                            cMethod = "ward.D2")
+  CIDR_result <- sDataC@clusters
+  names(CIDR_result) <- colnames(sDataC@tags)
+  return(CIDR_result)
+}
+
+
+.Monocle3 <- function(data,
+                      col_data,
+                      ngroups,
+                      PCs,
+                      n_cores,
+                      seed,
+                      verbose){
+  print_color_word(paste("\n \u2192", "Monocle3 is running..."), color = "green")
+  if(!requireNamespace("monocle3")){
+    message("monocle3 is not installed on your device")
+    message("Installing monocle3")
+    devtools::install_github('cole-trapnell-lab/monocle3')
+  }
+  gene_metadata <- data.frame("gene_short_name" = rownames(data),
+                              row.names = rownames(data))
+
+  cds <- data %>%
+    monocle3::new_cell_data_set(cell_metadata = col_data,
+                                gene_metadata = gene_metadata) %>%
+    monocle3::preprocess_cds(method = "PCA",
+                             num_dim = PCs,
+                             verbose = verbose) %>%
+    monocle3::reduce_dimension(reduction_method = "UMAP",
+                               preprocess_method = "PCA",
+                               verbose = verbose,
+                               cores = n_cores)
+  resolution <- .find_resolution(cds,
+                                 groups = ngroups,
+                                 algorithm = 4,
+                                 seed = seed)
+  cds <- monocle3::cluster_cells(cds,
+                                 reduction_method = "UMAP",
+                                 k = 20,
+                                 num_iter = 10,
+                                 resolution = resolution,
+                                 cluster_method = "leiden",
+                                 verbose = FALSE)
+  monocle3_result <- monocle3::clusters(cds) %>% as.numeric()
+  names(monocle3_result) <- colnames(cds)
+  return(monocle3_result)
+}

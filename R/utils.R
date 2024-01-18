@@ -346,7 +346,7 @@ get_count_data <- function(SCSTObject){
       tmp <- Seurat::FindClusters(object = object,
                                   algorithm = algorithm,
                                   resolution = i,
-                                  random.seed = seed,
+                                  random.seed = as.integer(seed),
                                   verbose = FALSE)
       ngroup <- length(levels(unique(tmp@meta.data$seurat_clusters)))
       if(ngroup == groups){

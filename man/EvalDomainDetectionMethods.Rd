@@ -13,6 +13,7 @@ EvalDomainDetectionMethods(
   min_counts_per_gene = 1,
   nFeatures = 2000,
   PCs = 20,
+  use_cuda = FALSE,
   learning_rate = 0.001,
   epochs = 1000,
   seed,
@@ -35,6 +36,8 @@ EvalDomainDetectionMethods(
 \item{nFeatures}{The number of highly variable genes. Default is 2000.}
 
 \item{PCs}{The number of principal components used. Default is 20.}
+
+\item{use_cuda}{Whether to use cuda to accelerate the training process or use cpu for computation. If true, make sure that you have installed the necessary packages with right versions in your Conda Environment.}
 
 \item{learning_rate}{Learning rate for training the artificial neural network. Default is 0.001.}
 

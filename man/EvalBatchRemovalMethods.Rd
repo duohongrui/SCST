@@ -13,6 +13,7 @@ EvalBatchRemovalMethods(
   min_counts_per_gene = 1,
   nFeatures = 2000,
   PCs = 20,
+  use_cuda = FALSE,
   nlayers = 2,
   nlatent = 20,
   genelikelihood = "nb",
@@ -39,6 +40,8 @@ EvalBatchRemovalMethods(
 \item{nFeatures}{The number of highly variable genes. Default is 2000.}
 
 \item{PCs}{The number of principal components used. Default is 20 and the value higher than 10 is recommended.}
+
+\item{use_cuda}{Whether to use cuda to accelerate the training process or use cpu for computation. If true, make sure that you have installed the necessary packages with right versions in your Conda Environment.}
 
 \item{nlayers}{Number of hidden layers used for encoder and decoder NNs. Default is 2.}
 

@@ -8,6 +8,7 @@
 #' @param min_counts_per_gene Include genes where more than min_counts_per_gene of counts are detected.
 #' @param nFeatures The number of highly variable genes. Default is 2000.
 #' @param PCs The number of principal components used. Default is 20.
+#' @param use_cuda Whether to use cuda to accelerate the training process or use cpu for computation. If true, make sure that you have installed the necessary packages with right versions in your Conda Environment.
 #' @param learning_rate Learning rate for training the artificial neural network. Default is 0.001.
 #' @param epochs Number of training epochs. Default is 1000.
 #' @param seed The random seed used for reproducibility.
@@ -23,6 +24,7 @@ EvalDomainDetectionMethods <- function(SimulationResult,
                                        min_counts_per_gene = 1,
                                        nFeatures = 2000,
                                        PCs = 20,
+                                       use_cuda = FALSE,
                                        learning_rate = 0.001,
                                        epochs = 1000,
                                        seed,
@@ -32,11 +34,20 @@ EvalDomainDetectionMethods <- function(SimulationResult,
     print_color_word("no No simulated data is found.")
     stop(error_output())
   }
-  validated_methods <- check_info_pre_application(SimulationResult = SimulationResult, Group = TRUE, Spatial = TRUE)
+  validated_methods <- check_info_pre_application(SimulationResult = SimulationResult,
+                                                  Group = TRUE,
+                                                  Spatial = TRUE)
   count_data <- get_count_data(SimulationResult)
   col_data <- get_cell_meta(SimulationResult)
   reticulate::use_condaenv(conda_env, required = TRUE)
   packages <- reticulate::py_list_packages(envname = conda_env)
+  if(use_cuda){
+    device <- "cuda"
+    use_gpu <- reticulate::r_to_py(TRUE)
+  }else{
+    device <- "cpu"
+    use_gpu <- reticulate::r_to_py(FALSE)
+  }
 
   ### Iterate all simulation methods and perform clustering and sequent evaluation
   DomainDetectionResults <- purrr::map(validated_methods, .f = function(method){
@@ -112,181 +123,83 @@ EvalDomainDetectionMethods <- function(SimulationResult,
 
     #-------- Domain Detection Methods --------#
     ### 1. STAGATE (STAGATE_path)
-    if(!requireNamespace("mclust")){
-      message("mclust is not installed on your device")
-      message("Installing mclust...")
-      utils::install.packages("mclust")
-    }
-    print_color_word(paste("\n \u2192", "STAGATE is running..."), color = "green")
-    STAGATE_path <- system.file("STAGATE", package = "SCST")
-    stagate <- reticulate::import_from_path("STAGATE_pyG", path = STAGATE_path, convert = FALSE)
-    stagate$Cal_Spatial_Net(adata, verbose = reticulate::r_to_py(verbose), model = "KNN", k_cutoff = as.integer(20))
-    stagate$Stats_Spatial_Net(adata)
-    adata = stagate$train_STAGATE(adata,
-                                  n_epochs = as.integer(epochs),
-                                  lr = learning_rate,
-                                  verbose = reticulate::r_to_py(verbose),
-                                  random_seed = as.integer(seed),
-                                  device = 'cpu')
-    # sc$pp$neighbors(adata, use_rep = 'STAGATE', key_added = "STAGATE_neighbors")
-    # adata = stagate$mclust_R(adata, used_obsm = 'STAGATE', num_cluster = n_domains)
-    STAGATE_obsm <- reticulate::py_to_r(adata$obsm["STAGATE"])
-    require("mclust")
-    res <- mclust::Mclust(data = STAGATE_obsm, G = n_domains, modelNames = "EEE")
-    STAGATE_result <- res$classification
-    print(STAGATE_result)
-    names(STAGATE_result) <- colnames(seurat)
+    STAGATE_moni <- peakRAM::peakRAM(
+      STAGATE_result <- .STAGATE(adata = adata,
+                                 seurat = seurat,
+                                 epochs = epochs,
+                                 learning_rate = learning_rate,
+                                 device = device,
+                                 n_domains = n_domains,
+                                 seed = seed,
+                                 verbose = verbose)
+    )
 
     ### 2. DeepST
-    if(!"louvain" %in% packages$package){
-      reticulate::py_install("louvain", envname = conda_env, pip = TRUE, ignore_installed = TRUE)
-    }
-    print_color_word(paste("\n \u2192", "DeepST is running..."), color = "green")
-    # new_path <- file.path(DeepST_path, "DeepST.py")
-    # reticulate::source_python(new_path, convert = FALSE)
-    DeepST_path <- system.file("DeepST", package = "SCST")
-    DeepST_function <- reticulate::import_from_path("DeepST", path = DeepST_path, convert = FALSE)
-    deepen = DeepST_function$run(task = "Identify_Domain",
-                                 pre_epochs = as.integer(epochs),
-                                 epochs = as.integer(epochs),
-                                 use_gpu = reticulate::r_to_py(FALSE))
-    adata = deepen$"_get_augment"(adata, use_morphological = reticulate::r_to_py(FALSE))
-    graph_dict = deepen$"_get_graph"(adata$obsm["spatial"], distType = "BallTree")
-    ##### Enhanced data preprocessing
-    processed_data = deepen$"_data_process"(adata, pca_n_comps = as.integer(100))
-    ##### Training models
-    DeepST = deepen$"_fit"(processed_data, graph_dict)
-    ##### DeepST outputs
-    adata$obsm["DeepST_embed"] = DeepST
-    ##### Define the number of space domains, and the model can also be customized.
-    adata = deepen$"_get_cluster_data"(adata, n_domains = n_domains, priori = reticulate::r_to_py(TRUE))
-    DeepST_result <- reticulate::py_to_r(adata$obs["DeepST_refine_domain"])
-    DeepST_result <- as.character(DeepST_result)
-    names(DeepST_result) <- colnames(X)
+    DeepST_moni <- peakRAM::peakRAM(
+      DeepST_result <- .DeepST(conda_env = conda_env,
+                               packages = packages,
+                               adata = adata,
+                               seurat = seurat,
+                               epochs = epochs,
+                               use_gpu = use_gpu,
+                               n_domains = n_domains)
+    )
 
     ### 3. Seurat_Louvain
-    print_color_word(paste("\n \u2192", "Seurat_Louvain is running..."), color = "green")
-    resolution <- .find_resolution(seurat,
-                                   groups = n_domains,
-                                   algorithm = 1,
-                                   seed = seed)
-    seurat_louvain <- Seurat::FindClusters(object = seurat,
-                                           algorithm = 1,
-                                           resolution = resolution,
-                                           random.seed = seed,
-                                           verbose = FALSE)
-    seurat_louvain_result <- as.numeric(seurat_louvain@meta.data$seurat_clusters)
-    names(seurat_louvain_result) <- colnames(seurat)
+    seurat_louvain_moni <- peakRAM::peakRAM(
+      seurat_louvain_result <- .seurat_louvain(seurat = seurat,
+                                               n_domains = n_domains,
+                                               seed = seed)
+    )
 
     ### 4. Seurat_Leiden
-    if(!"leidenalg" %in% packages$package){
-      reticulate::py_install("leidenalg", envname = conda_env, pip = TRUE, ignore_installed = TRUE)
-    }
-    print_color_word(paste("\n \u2192", "Seurat_Leiden is running..."), color = "green")
-    resolution <- .find_resolution(seurat,
-                                   groups = n_domains,
-                                   algorithm = 4,
-                                   seed = seed)
-    seurat_leiden <- Seurat::FindClusters(object = seurat,
-                                          algorithm = 4,
-                                          resolution = resolution,
-                                          random.seed = seed,
-                                          verbose = FALSE)
-    seurat_leiden_result <- as.numeric(seurat_leiden@meta.data$seurat_clusters)
-    names(seurat_leiden_result) <- colnames(seurat)
+    seurat_leiden_moni <- peakRAM::peakRAM(
+      seurat_leiden_result <- .seurat_leiden(seurat = seurat,
+                                             packages = packages,
+                                             conda_env = conda_env,
+                                             n_domains = n_domains,
+                                             seed = seed)
+    )
 
     ### 5. BASS
-    if(!requireNamespace("BASS")){
-      message("BASS is not installed on your device")
-      message("Installing BASS...")
-      devtools::install_github("zhengli09/BASS")
-    }
-    print_color_word(paste("\n \u2192", "BASS is running..."), color = "green")
-    #### Create a BASS object
-    set.seed(seed)
-    require(BASS)
-    BASS <- BASS::createBASSObject(list("A" = log2(as.matrix(X) + 1)),
-                                   list("A" = as.matrix(location)),
-                                   C = n_domains,
-                                   R = n_domains,
-                                   beta_method = "SW")
-    BASS <- BASS::BASS.preprocess(BASS,
-                                  doLogNormalize = FALSE,
-                                  nSE = nFeatures,
-                                  geneSelect = "sparkx",
-                                  doPCA = TRUE,
-                                  scaleFeature = FALSE,
-                                  nPC = PCs,
-                                  doBatchCorrect = FALSE)
-    BASS <- BASS::BASS.run(BASS)
-    BASS <- BASS::BASS.postprocess(BASS)
-    BASS_result <- BASS@results[["z"]][[1]]
-    names(BASS_result) <- colnames(X)
+    BASS_moni <- peakRAM::peakRAM(
+      BASS_result <- .BASS(X = X,
+                           location = location,
+                           n_domains = n_domains,
+                           nFeatures = nFeatures,
+                           PCs = PCs,
+                           seed = seed)
+    )
 
     ### 6. SCGDL
-    print_color_word(paste("\n \u2192", "SCGDL is running..."), color = "green")
-    SCGDL_auxiliary_path <- system.file("SCGDL", package = "SCST")
-    SCGDL_auxiliary <- reticulate::import_from_path("SCGDL_auxiliary", path = SCGDL_auxiliary_path)
-    # SCGDL <- reticulate::import_from_path("SCGDL", path = "/Users/duohongrui/Downloads/SCGDL")
-    reticulate::source_python(paste0(SCGDL_auxiliary_path, "/SCGDL_Train.py"), convert = FALSE)
-    SCGDL_auxiliary$Spatial_Dis_Cal(adata, knn_dis = as.integer(20), model = "KNN")
-    adata = SCGDL_Train(adata,
-                        lr = learning_rate,
-                        random_seed = as.integer(seed),
-                        num_epochs = as.integer(epochs))
-    knowledge = SCGDL_auxiliary$BayesianGaussianMixture(n_components = n_domains,
-                                                        weight_concentration_prior_type = 'dirichlet_process',
-                                                        weight_concentration_prior = 50)$fit(adata$obsm["SCGDL"])
-    SCGDL_result = knowledge$predict(adata$obsm["SCGDL"]) + 1
-    SCGDL_result <- as.character(SCGDL_result)
-    # SCGDL_result <- reticulate::py_to_r(SCGDL_result)
-    names(SCGDL_result) <- colnames(seurat)
+    SCGDL_moni <- peakRAM::peakRAM(
+      SCGDL_result <- .SCGDL(adata = adata,
+                             seurat = seurat,
+                             epochs = epochs,
+                             learning_rate = learning_rate,
+                             n_domains = n_domains,
+                             seed = seed)
+    )
 
-    ### 7. GraphST (pot)
-    if(!"graphst" %in% packages$package){
-      reticulate::py_install("GraphST", envname = conda_env, pip = TRUE, ignore_installed = TRUE)
-    }
-    if(!"pot" %in% packages$package){
-      reticulate::py_install("pot", envname = conda_env, pip = TRUE, ignore_installed = TRUE)
-    }
-    if(!"scikit-misc" %in% packages$package){
-      reticulate::py_install("scikit-misc", envname = conda_env, pip = TRUE, ignore_installed = TRUE)
-    }
-    # reticulate::source_python(file.path(conda_env, "lib/python3.9/site-packages/GraphST/preprocess.py"), convert = FALSE)
-    # reticulate::source_python(file.path(conda_env, "lib/python3.9/site-packages/GraphST/GraphST.py"), convert = FALSE)
-    print_color_word(paste("\n \u2192", "GraphST is running..."), color = "green")
-    GraphST <- reticulate::import("GraphST", convert = FALSE)
-    model = GraphST$GraphST$GraphST(adata,
-                                    device = 'cpu',
-                                    epochs = as.integer(epochs),
-                                    learning_rate = as.integer(learning_rate),
-                                    random_seed = as.integer(seed))
-    adata = model$train()
-    GraphST$utils$clustering(adata,
-                             n_clusters = n_domains,
-                             radius = as.integer(20),
-                             method = "louvain",
-                             start = 0.01,
-                             end = 2.0,
-                             increment = 0.01,
-                             refinement = reticulate::r_to_py(FALSE))
-    GraphST_result = adata$obs["domain"]
-    GraphST_result = GraphST_result$astype("object")
-    GraphST_result <- reticulate::py_to_r(GraphST_result) %>% as.character()
-    names(GraphST_result) <- colnames(X)
+    ### 7. GraphST
+    GraphST_moni <- peakRAM::peakRAM(
+      GraphST_result <- .GraphST(conda_env = conda_env,
+                                 packages = packages,
+                                 adata = adata,
+                                 seurat = seurat,
+                                 epochs = epochs,
+                                 learning_rate = learning_rate,
+                                 n_domains = n_domains,
+                                 seed = seed,
+                                 device = device)
+    )
 
     ### 8. DR-SC
-    if(!requireNamespace("DR.SC")){
-      message("DR.SC is not installed on your device")
-      message("Installing DR.SC...")
-      utils::install.packages("DR.SC")
-    }
-    print_color_word(paste("\n \u2192", "DR.SC is running..."), color = "green")
-    DR.SC_result <- DR.SC::DR.SC(seurat,
-                                 K = n_domains,
-                                 platform = "Visium",
-                                 verbose = verbose)
-    DR.SC_result <- DR.SC_result$spatial.drsc.cluster
+    DR.SC_moni <- peakRAM::peakRAM(
+      DR.SC_result <- .DR.SC(seurat = seurat,
+                             n_domains = n_domains,
+                             verbose = verbose)
+    )
 
     ### collect all clustering methods
     all_domain_detection_results <- list(
@@ -306,12 +219,37 @@ EvalDomainDetectionMethods <- function(SimulationResult,
       all_domain_detection_results,
       trueLabels,
       method)
+    #-------- Record Resource Occupation During Execution --------#
+    resource_monitering <- tibble::tibble(
+      "Simulation_Method" = method,
+      "Clustering_Method" = names(all_domain_detection_results),
+      "Time" = c(DeepST_moni[, 2],
+                 seurat_leiden_moni[, 2],
+                 seurat_louvain_moni[, 2],
+                 BASS_moni[, 2],
+                 GraphST_moni[, 2],
+                 STAGATE_moni[, 2],
+                 SCGDL_moni[, 2],
+                 DR.SC_moni[, 2]),
+      "Memory" = c(DeepST_moni[, 4],
+                   seurat_leiden_moni[, 4],
+                   seurat_louvain_moni[, 4],
+                   BASS_moni[, 4],
+                   GraphST_moni[, 4],
+                   STAGATE_moni[, 4],
+                   SCGDL_moni[, 4],
+                   DR.SC_moni[, 4]),
+      "Device" = ifelse(use_cuda,
+                        c("cuda", "cpu", "cpu", "cpu", "cuda", "cuda", "cuda", "cpu"),
+                        "cpu")
+    )
     #-------- Add Clustering Results to Seurat For Visualization --------#
     all_domain_detection_results <- lapply(all_domain_detection_results, FUN = function(x){as.character(x)})
     seurat <- Seurat::AddMetaData(seurat, all_domain_detection_results)
     #-------- Outcome of one simulation method --------#
     list("seurat" = seurat,
-         "eval_domain_detection_table" = eval_domain_detection_table)
+         "eval_domain_detection_table" = eval_domain_detection_table,
+         "resource_monitering" = resource_monitering)
   })
   names(DomainDetectionResults) <- validated_methods
   return(DomainDetectionResults)
@@ -343,16 +281,277 @@ EvalDomainDetectionMethods <- function(SimulationResult,
 }
 
 
+.STAGATE <- function(adata,
+                     seurat,
+                     epochs,
+                     learning_rate,
+                     device,
+                     n_domains,
+                     seed,
+                     verbose){
+  if(!requireNamespace("mclust")){
+    message("mclust is not installed on your device")
+    message("Installing mclust...")
+    utils::install.packages("mclust")
+  }
+  print_color_word(paste("\n \u2192", "STAGATE is running..."), color = "green")
+  STAGATE_path <- system.file("STAGATE", package = "SCST")
+  stagate <- reticulate::import_from_path("STAGATE_pyG", path = STAGATE_path, convert = FALSE)
+  stagate$Cal_Spatial_Net(adata, verbose = reticulate::r_to_py(verbose), model = "KNN", k_cutoff = as.integer(20))
+  stagate$Stats_Spatial_Net(adata)
+  adata = stagate$train_STAGATE(adata,
+                                n_epochs = as.integer(epochs),
+                                lr = learning_rate,
+                                verbose = reticulate::r_to_py(verbose),
+                                random_seed = as.integer(seed),
+                                device = device)
+  # sc$pp$neighbors(adata, use_rep = 'STAGATE', key_added = "STAGATE_neighbors")
+  # adata = stagate$mclust_R(adata, used_obsm = 'STAGATE', num_cluster = n_domains)
+  STAGATE_obsm <- reticulate::py_to_r(adata$obsm["STAGATE"])
+  require("mclust")
+  model_names <- c("EEE", "EEI", "EII", "EVI", "VEI", "VII", "VVI")
+  for(i in model_names){
+    res <- mclust::Mclust(data = STAGATE_obsm, G = n_domains, modelNames = i)
+    if(!is.null(res)){
+      print(i)
+      break
+    }
+  }
+  STAGATE_result <- res$classification
+  print(STAGATE_result)
+  names(STAGATE_result) <- colnames(seurat)
+  return(STAGATE_result)
+}
+
+
+.DeepST <- function(conda_env,
+                    packages,
+                    adata,
+                    seurat,
+                    epochs,
+                    use_gpu,
+                    n_domains){
+  if(!"louvain" %in% packages$package){
+    reticulate::py_install("louvain", envname = conda_env, pip = TRUE, ignore_installed = TRUE)
+  }
+  print_color_word(paste("\n \u2192", "DeepST is running..."), color = "green")
+  # new_path <- file.path(DeepST_path, "DeepST.py")
+  # reticulate::source_python(new_path, convert = FALSE)
+  DeepST_path <- system.file("DeepST", package = "SCST")
+  DeepST_function <- reticulate::import_from_path("DeepST", path = DeepST_path, convert = FALSE)
+  deepen = DeepST_function$run(task = "Identify_Domain",
+                               pre_epochs = as.integer(epochs),
+                               epochs = as.integer(epochs),
+                               use_gpu = use_gpu)
+  adata = deepen$"_get_augment"(adata, use_morphological = reticulate::r_to_py(FALSE))
+  graph_dict = deepen$"_get_graph"(adata$obsm["spatial"], distType = "BallTree")
+  ##### Enhanced data preprocessing
+  processed_data = deepen$"_data_process"(adata, pca_n_comps = as.integer(100))
+  ##### Training models
+  DeepST = deepen$"_fit"(processed_data, graph_dict)
+  ##### DeepST outputs
+  adata$obsm$setdefault(key = "DeepST_embed", default = DeepST)
+  # adata$obsm["DeepST_embed"] = DeepST
+  ##### Define the number of space domains, and the model can also be customized.
+  adata = deepen$"_get_cluster_data"(adata, n_domains = n_domains, priori = reticulate::r_to_py(TRUE))
+  DeepST_result <- reticulate::py_to_r(adata$obs["DeepST_refine_domain"])
+  DeepST_result <- as.character(DeepST_result)
+  names(DeepST_result) <- colnames(seurat)
+  return(DeepST_result)
+}
+
+
+.seurat_louvain <- function(seurat,
+                            n_domains,
+                            seed){
+  print_color_word(paste("\n \u2192", "Seurat_Louvain is running..."), color = "green")
+  resolution <- .find_resolution(seurat,
+                                 groups = n_domains,
+                                 algorithm = 1,
+                                 seed = seed)
+  seurat_louvain <- Seurat::FindClusters(object = seurat,
+                                         algorithm = 1,
+                                         resolution = resolution,
+                                         random.seed = seed,
+                                         verbose = FALSE)
+  seurat_louvain_result <- as.numeric(seurat_louvain@meta.data$seurat_clusters)
+  names(seurat_louvain_result) <- colnames(seurat)
+  return(seurat_louvain_result)
+}
+
+
+.seurat_leiden <- function(seurat,
+                           packages,
+                           conda_env,
+                           n_domains,
+                           seed){
+  if(!"leidenalg" %in% packages$package){
+    reticulate::py_install("leidenalg", envname = conda_env, pip = TRUE, ignore_installed = TRUE)
+  }
+  print_color_word(paste("\n \u2192", "Seurat_Leiden is running..."), color = "green")
+  resolution <- .find_resolution(seurat,
+                                 groups = n_domains,
+                                 algorithm = 4,
+                                 seed = seed)
+  seurat_leiden <- Seurat::FindClusters(object = seurat,
+                                        algorithm = 4,
+                                        resolution = resolution,
+                                        random.seed = seed,
+                                        verbose = FALSE)
+  seurat_leiden_result <- as.numeric(seurat_leiden@meta.data$seurat_clusters)
+  names(seurat_leiden_result) <- colnames(seurat)
+  return(seurat_leiden_result)
+}
+
+
+.BASS <- function(X,
+                  location,
+                  n_domains,
+                  nFeatures,
+                  PCs,
+                  seed){
+  if(!requireNamespace("BASS")){
+    message("BASS is not installed on your device")
+    message("Installing BASS...")
+    devtools::install_github("zhengli09/BASS")
+  }
+  print_color_word(paste("\n \u2192", "BASS is running..."), color = "green")
+  #### Create a BASS object
+  set.seed(seed)
+  require(BASS)
+  BASS <- BASS::createBASSObject(list("A" = log2(as.matrix(X) + 1)),
+                                 list("A" = as.matrix(location)),
+                                 C = n_domains,
+                                 R = n_domains,
+                                 beta_method = "SW")
+  BASS <- BASS::BASS.preprocess(BASS,
+                                doLogNormalize = FALSE,
+                                nSE = nFeatures,
+                                geneSelect = "sparkx",
+                                doPCA = TRUE,
+                                scaleFeature = FALSE,
+                                nPC = PCs,
+                                doBatchCorrect = FALSE)
+  BASS <- BASS::BASS.run(BASS)
+  BASS <- BASS::BASS.postprocess(BASS)
+  BASS_result <- BASS@results[["z"]][[1]]
+  names(BASS_result) <- colnames(X)
+  return(BASS_result)
+}
+
+
+.SCGDL <- function(adata,
+                   seurat,
+                   epochs,
+                   learning_rate,
+                   n_domains,
+                   seed){
+  print_color_word(paste("\n \u2192", "SCGDL is running..."), color = "green")
+  SCGDL_auxiliary_path <- system.file("SCGDL", package = "SCST")
+  SCGDL_auxiliary <- reticulate::import_from_path("SCGDL_auxiliary", path = SCGDL_auxiliary_path)
+  # SCGDL <- reticulate::import_from_path("SCGDL", path = "/Users/duohongrui/Downloads/SCGDL")
+  SCGDL <- reticulate::import_from_path("SCGDL", path = SCGDL_auxiliary_path)
+  reticulate::source_python(paste0(SCGDL_auxiliary_path, "/SCGDL_Train.py"), convert = FALSE)
+  SCGDL_auxiliary$Spatial_Dis_Cal(adata, knn_dis = as.integer(20), model = "KNN")
+  adata = SCGDL_Train(adata,
+                      lr = learning_rate,
+                      random_seed = as.integer(seed),
+                      num_epochs = as.integer(epochs))
+  knowledge = SCGDL_auxiliary$BayesianGaussianMixture(n_components = n_domains,
+                                                      weight_concentration_prior_type = 'dirichlet_process',
+                                                      weight_concentration_prior = 50)$fit(adata$obsm["SCGDL"])
+  SCGDL_result = knowledge$predict(adata$obsm["SCGDL"]) + 1
+  SCGDL_result <- as.character(SCGDL_result)
+  # SCGDL_result <- reticulate::py_to_r(SCGDL_result)
+  names(SCGDL_result) <- colnames(seurat)
+  return(SCGDL_result)
+}
+
+
+.GraphST <- function(conda_env,
+                     packages,
+                     adata,
+                     seurat,
+                     n_domains,
+                     epochs,
+                     learning_rate,
+                     seed,
+                     device){
+  if(!"graphst" %in% packages$package){
+    reticulate::py_install("GraphST", envname = conda_env, pip = TRUE, ignore_installed = TRUE)
+  }
+  if(!"pot" %in% packages$package){
+    reticulate::py_install("pot", envname = conda_env, pip = TRUE, ignore_installed = TRUE)
+  }
+  if(!"scikit-misc" %in% packages$package){
+    reticulate::py_install("scikit-misc", envname = conda_env, pip = TRUE, ignore_installed = TRUE)
+  }
+  # reticulate::source_python(file.path(conda_env, "lib/python3.9/site-packages/GraphST/preprocess.py"), convert = FALSE)
+  # reticulate::source_python(file.path(conda_env, "lib/python3.9/site-packages/GraphST/GraphST.py"), convert = FALSE)
+  print_color_word(paste("\n \u2192", "GraphST is running..."), color = "green")
+  GraphST <- reticulate::import("GraphST", convert = FALSE)
+  model = GraphST$GraphST$GraphST(adata,
+                                  device = device,
+                                  epochs = as.integer(epochs),
+                                  learning_rate = as.integer(learning_rate),
+                                  random_seed = as.integer(seed))
+  adata = model$train()
+  GraphST$utils$clustering(adata,
+                           n_clusters = n_domains,
+                           radius = as.integer(20),
+                           method = "louvain",
+                           start = 0.01,
+                           end = 2.0,
+                           increment = 0.01,
+                           refinement = reticulate::r_to_py(FALSE))
+  GraphST_result = adata$obs["domain"]
+  GraphST_result = GraphST_result$astype("object")
+  GraphST_result <- reticulate::py_to_r(GraphST_result) %>% as.character()
+  names(GraphST_result) <- colnames(seurat)
+  return(GraphST_result)
+}
+
+
+.DR.SC <- function(seurat,
+                   n_domains,
+                   verbose){
+  if(!requireNamespace("DR.SC")){
+    message("DR.SC is not installed on your device")
+    message("Installing DR.SC...")
+    utils::install.packages("DR.SC")
+  }
+  print_color_word(paste("\n \u2192", "DR.SC is running..."), color = "green")
+  DR.SC_result <- DR.SC::DR.SC(seurat,
+                               K = n_domains,
+                               platform = "Visium",
+                               verbose = verbose)
+  DR.SC_result <- DR.SC_result$spatial.drsc.cluster
+  return(DR.SC_result)
+}
+
+
 #### Environment Configuration
 #' conda create -n spatial python=3.9
 #' conda activate spatial
 #' git clone https://github.com/spatial-Transcriptomics/DeepST.git
 #' cd DeepST
 #'
+#' #### CPU
 #' pip install torch==1.13.0 torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
 #' pip torch_scatter torch_sparse torch_cluster torch_spline_conv torch_geometric -f https://data.pyg.org/whl/torch-1.13.0+cpu.html
 #' pip install -r requirements.txt
 #' pip install louvain
+#'
+#' #### CUDA
+#'
+#'
+#' https://data.pyg.org/whl/index.html
+#' Driver https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html
+#'
+#' https://www.cnblogs.com/Wanggcong/p/12625540/html
+#'
+#' torch_clusters/torch_scatter/torch_sparse
+#'
 #'
 #' pip install pot
 #' pip install scikit-misc
