@@ -9,6 +9,7 @@ muscat_simulation(
   cell_num = NULL,
   gene_num = NULL,
   nGroups = 1,
+  prop_group = 1,
   fc_group = 2,
   de_prop = 0.2,
   return_format,
@@ -25,6 +26,8 @@ muscat_simulation(
 \item{gene_num}{The expected number of simulated genes. If NULL, the original gene number in the reference data will be adopted.}
 
 \item{nGroups}{The expected number of groups in the simulated data. Default is 1.}
+
+\item{prop_group}{The proportion of cells in each group. Default is 1.}
 
 \item{fc_group}{The fold change of DEGs between cell groups. Default is 2.}
 

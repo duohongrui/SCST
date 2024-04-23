@@ -11,8 +11,12 @@ Splat_simulation(
   nGroups = 1,
   prop_group = 1,
   de_prop = 0.2,
+  de_facLoc = 0.1,
+  de_facScale = 0.4,
   nBatches = 1,
   prop_batch = 1,
+  batch_facLoc = 0.1,
+  batch_facScale = 0.1,
   path = FALSE,
   verbose = FALSE,
   return_format,
@@ -33,9 +37,17 @@ Splat_simulation(
 
 \item{de_prop}{The proportion of DEGs over all genes between different simulated cell groups. Default is 0.2.}
 
+\item{de_facLoc}{Location (meanlog) parameter for the differential expression factor log-normal distribution. Can be a vector.}
+
+\item{de_facScale}{Scale (sdlog) parameter for the differential expression factor log-normal distribution. Can be a vector.}
+
 \item{nBatches}{The number of cell batches to be simulated. Default is 1.}
 
 \item{prop_batch}{The proportion of cells in each batch. Default is 1.}
+
+\item{batch_facLoc}{Location (meanlog) parameter for the batch effect factor log-normal distribution. Can be a vector.}
+
+\item{batch_facScale}{Scale (sdlog) parameter for the batch effect factor log-normal distribution. Can be a vector.}
 
 \item{path}{A Boolean symbol (TRUE or FLASE) which determines whether to simulate datasets with trajectory along the path. Default is false.}
 

@@ -9,12 +9,17 @@ Set_customed_parameters(
   return_format = "list",
   cell_num = NULL,
   gene_num = NULL,
+  mode = NULL,
   nGroups = NULL,
   prop_group = NULL,
   de_prop = NULL,
   fc_group = NULL,
+  de_facLoc = NULL,
+  de_facScale = NULL,
   nBatches = NULL,
   prop_batch = NULL,
+  batch_facLoc = NULL,
+  batch_facScale = NULL,
   path = NULL
 )
 }
@@ -27,6 +32,8 @@ Set_customed_parameters(
 
 \item{gene_num}{The expected number of genes to be simulated.}
 
+\item{mode}{SCRIP contains five different simulation modes, and you can specify which mode do you use (default is GP-trendedBCV): 1. GP-trendedBCV; 2. GP-commonBCV; 3. BGP-commonBCV 4. BP 5. BGP-trendedBCV}
+
 \item{nGroups}{The expected number of cell groups to be simulated. Default is 1.}
 
 \item{prop_group}{The proportion of cells in each group. Default is 1.}
@@ -35,9 +42,17 @@ Set_customed_parameters(
 
 \item{fc_group}{The fold change of the generated DEGs. Default is 2.}
 
+\item{de_facLoc}{Location (meanlog) parameter for the differential expression factor log-normal distribution. Can be a vector.}
+
+\item{de_facScale}{Scale (sdlog) parameter for the differential expression factor log-normal distribution. Can be a vector.}
+
 \item{nBatches}{The expected number of cell batches to be simulated. Default is 1.}
 
 \item{prop_batch}{The proportion of cells in each batch. Default is 1.}
+
+\item{batch_facLoc}{Location (meanlog) parameter for the batch effect factor log-normal distribution. Can be a vector.}
+
+\item{batch_facScale}{Scale (sdlog) parameter for the batch effect factor log-normal distribution. Can be a vector.}
 
 \item{path}{A Boolean (TRUE or FLASE) which determines whether to simulate datasets with trajectory along the path. Default is false.}
 }

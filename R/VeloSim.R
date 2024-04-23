@@ -65,6 +65,8 @@ VeloSim_estimation <- function(SCST_Object,
 #'
 #' @references Zhang Z, Zhang X. VeloSim: Simulating single cell gene-expression and RNA velocity. BioRxiv, 2021. <https://doi.org/10.1101/2021.01.11.426277>
 #'
+#' @export
+#'
 VeloSim_simulation <- function(estimated_result,
                                cell_num = NULL,
                                gene_num = NULL,

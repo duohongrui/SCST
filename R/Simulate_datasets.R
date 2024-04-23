@@ -41,7 +41,12 @@ Simulate_datasets <- function(
     sim_params <- SCST_Object@customed_setting[[used_method]]
     sim_params[["estimated_result"]] <- SCST_Object
     sim_params[["verbose"]] <- verbose
-    sim_params <- sim_params[-grep(pattern = "[...]", x = names(sim_params))]
+    if("..." %in% names(sim_params)){
+      sim_params <- sim_params[-grep(pattern = "[...]", x = names(sim_params))]
+    }
+    if("SCST_Object" %in% names(formals(right_method))){
+      sim_params[["SCST_Object"]] <- SCST_Object
+    }
     ### simulate
     errors <- try(
       expr = sim_result <- do.call(right_method, sim_params),

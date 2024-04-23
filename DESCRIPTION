@@ -1,6 +1,6 @@
 Package: SCST
 Type: Package
-Title: Single-cell transcriptome data simulation tool for benchmarks and other applications
+Title: A scalable and versatile tool for data simulation and method evaluation in single-cell and spatially resolved transcriptomics
 Version: 0.0.0.9000
 Author: Who wrote it
 Maintainer: The package maintainer <yourself@somewhere.net>

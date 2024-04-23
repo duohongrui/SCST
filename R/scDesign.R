@@ -16,6 +16,8 @@
 #'
 #' @references Li W V, Li J J. A statistical simulator scDesign for rational scRNA-seq experimental design. Bioinformatics, 2019, 35(14): i41-i50. <https://doi.org/10.1093/bioinformatics/btz321>
 #'
+#' @export
+#'
 
 scDesign_simulation <- function(SCST_Object,
                                 cell_num = NULL,

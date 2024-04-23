@@ -79,6 +79,8 @@ dyntoy_estimation <- function(SCST_Object,
 #' @param return_format The format of returned simulation data. Choices: list, SingleCellExperiment and Seurat.
 #' @param ... Other parameters represented in dyntoy, see [dyntoy::generate_dataset()]
 #'
+#' @export
+#'
 dyntoy_simulation <- function(estimated_result,
                               cell_num = NULL,
                               gene_num = NULL,

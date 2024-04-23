@@ -209,12 +209,17 @@ integrate_multi_result <- function(
 #' @param return_format The format of returned simulation data. Choices: list, SingleCellExperiment and Seurat. Default is list.
 #' @param cell_num The expected number of cells to be simulated.
 #' @param gene_num The expected number of genes to be simulated.
+#' @param mode SCRIP contains five different simulation modes, and you can specify which mode do you use (default is GP-trendedBCV): 1. GP-trendedBCV; 2. GP-commonBCV; 3. BGP-commonBCV 4. BP 5. BGP-trendedBCV
 #' @param nGroups The expected number of cell groups to be simulated. Default is 1.
 #' @param prop_group The proportion of cells in each group. Default is 1.
 #' @param de_prop The proportion of DEGs over all genes between different simulated cell groups. Default is 0.2.
 #' @param fc_group The fold change of the generated DEGs. Default is 2.
+#' @param de_facLoc Location (meanlog) parameter for the differential expression factor log-normal distribution. Can be a vector.
+#' @param de_facScale Scale (sdlog) parameter for the differential expression factor log-normal distribution. Can be a vector.
 #' @param nBatches The expected number of cell batches to be simulated. Default is 1.
 #' @param prop_batch The proportion of cells in each batch. Default is 1.
+#' @param batch_facLoc Location (meanlog) parameter for the batch effect factor log-normal distribution. Can be a vector.
+#' @param batch_facScale Scale (sdlog) parameter for the batch effect factor log-normal distribution. Can be a vector.
 #' @param path A Boolean (TRUE or FLASE) which determines whether to simulate datasets with trajectory along the path. Default is false.
 #'
 #' @return A SCST object
@@ -225,23 +230,33 @@ Set_customed_parameters <- function(
   return_format = "list",
   cell_num = NULL,
   gene_num = NULL,
+  mode = NULL,
   nGroups = NULL,
   prop_group = NULL,
   de_prop = NULL,
   fc_group = NULL,
+  de_facLoc = NULL,
+  de_facScale = NULL,
   nBatches = NULL,
   prop_batch = NULL,
+  batch_facLoc = NULL,
+  batch_facScale = NULL,
   path = NULL
 ){
   ### Change default parameter values
   if(!is.null(cell_num)) {SCST_Object@customed_setting$cell_num <- cell_num}
   if(!is.null(gene_num)) {SCST_Object@customed_setting$gene_num <- gene_num}
+  if(!is.null(mode)) {SCST_Object@customed_setting$mode <- mode}
   if(!is.null(nGroups)) {SCST_Object@customed_setting$nGroups <- nGroups}
   if(!is.null(prop_group)) {SCST_Object@customed_setting$prop_group <- prop_group}
   if(!is.null(de_prop)) {SCST_Object@customed_setting$de_prop <- de_prop}
   if(!is.null(fc_group)) {SCST_Object@customed_setting$fc_group <- fc_group}
+  if(!is.null(de_facLoc)) {SCST_Object@customed_setting$de_facLoc <- de_facLoc}
+  if(!is.null(de_facScale)) {SCST_Object@customed_setting$de_facScale <- de_facScale}
   if(!is.null(nBatches)) {SCST_Object@customed_setting$nBatches <- nBatches}
   if(!is.null(prop_batch)) {SCST_Object@customed_setting$prop_batch <- prop_batch}
+  if(!is.null(batch_facLoc)) {SCST_Object@customed_setting$batch_facLoc <- batch_facLoc}
+  if(!is.null(batch_facScale)) {SCST_Object@customed_setting$batch_facScale <- batch_facScale}
   if(!is.null(path)) {SCST_Object@customed_setting$path <- path}
 
   ### Determine useful parameters for each method
@@ -540,3 +555,110 @@ get_true_DEGs <- function(
 }
 
 
+.cell_properties <- function(data,
+                             verbose = FALSE,
+                             nCores = 1){
+  ## 1) library size
+  if(verbose){
+    message("Calculating library size of cells...")
+  }
+  library_size <- colSums(data)
+  ## 2) fraction of zero in cells
+  if(verbose){
+    message("Calculating fraction of zero in cells...")
+  }
+  zero_fraction_cell <- apply(data, 2, function(x){
+    sum(x == 0)/length(x)
+  })
+  ## 3) cell correlation
+  if(verbose){
+    message("Calculating cell correlation...")
+  }
+  if(!requireNamespace("WGCNA", quietly = TRUE)){
+    message("WGCNA is not installed on your device...")
+    message("Installing WGCNA...")
+    utils::install.packages("WGCNA")
+    cell_cor <- WGCNA::cor(data, method = "pearson", nThreads = nCores)
+  }else{
+    cell_cor <- WGCNA::cor(data, method = "pearson", nThreads = nCores)
+  }
+  cell_cor <- cell_cor[upper.tri(cell_cor)]
+  ## 4) Proportion of cell outliers
+  if(verbose){
+    message("Calculating proportion of cell outliers...")
+  }
+  q <- quantile(library_size)
+  iqr <- stats::IQR(library_size)
+  outlier_value_min <- q[2] - 1.5*iqr
+  outlier_value_max <- q[4] + 1.5*iqr
+  prop_outliers_cell <- sum(library_size < outlier_value_min | library_size > outlier_value_max)/ncol(data)
+  ### list
+  cell_properties <- dplyr::lst(library_size,
+                                zero_fraction_cell,
+                                cell_cor,
+                                prop_outliers_cell)
+  if(verbose){
+    message("Done...")
+  }
+  return(cell_properties)
+}
+
+
+#' @importFrom stats quantile
+
+.gene_properties <- function(data,
+                             cpm_norm = TRUE,
+                             verbose = FALSE){
+  if(!requireNamespace("edgeR", quietly = TRUE)){
+    message("edgeR is not installed on your device...")
+    message("Installing edgeR...")
+    BiocManager::install("edgeR")
+  }
+  if(cpm_norm){
+    if(verbose){
+      message("Performing log2 CPM nomalization...")
+    }
+    norm_data <- log2(edgeR::cpm(data)+1)
+  }
+  ## 1) mean expression of log2 CPM of genes
+  if(verbose){
+    message("Calculating mean expression for genes...")
+  }
+  mean_expression <- apply(norm_data, 1, mean)
+  ## 2) standard variance of log2 CPM of genes
+  if(verbose){
+    message("Calculating standard variance of genes...")
+  }
+  sd <- apply(norm_data, 1, sd)
+  ## 3) coefficient of variance
+  if(verbose){
+    message("Calculating coefficient of variance...")
+  }
+  cv <- apply(data, 1, sd)/apply(data, 1, mean) * 100
+  ## 4) fraction of zero in genes
+  if(verbose){
+    message("Calculating fraction of zero in genes...")
+  }
+  zero_fraction_gene <- apply(data, 1, function(x){
+    sum(x == 0)/length(x)
+  })
+  ## 5) Proportion of gene outliers
+  if(verbose){
+    message("Calculating proportion of gene outliers...")
+  }
+  q <- stats::quantile(rowSums(data))
+  iqr <- stats::IQR(rowSums(data))
+  outlier_value_min <- q[2] - 1.5*iqr
+  outlier_value_max <- q[4] + 1.5*iqr
+  prop_outliers_gene <- sum(rowSums(data) < outlier_value_min | rowSums(data) > outlier_value_max)/nrow(data)
+  ### list
+  gene_properties <- dplyr::lst(mean_expression,
+                                sd,
+                                cv,
+                                zero_fraction_gene,
+                                prop_outliers_gene)
+  if(verbose){
+    message("Done...")
+  }
+  return(gene_properties)
+}

@@ -6,7 +6,6 @@
 \usage{
 zinbwave_simulation(
   estimated_result,
-  cell_num = NULL,
   return_format,
   verbose = FALSE,
   seed,
@@ -15,8 +14,6 @@ zinbwave_simulation(
 }
 \arguments{
 \item{estimated_result}{The SCST object after estimating parameters using [splatter::zinbwave_estimation()]}
-
-\item{cell_num}{The expected number of simulated cells. If NULL, the original cell number in the reference data will be adopted.}
 
 \item{return_format}{The format of returned simulation data. Choices: list, SingleCellExperiment and Seurat.}
 

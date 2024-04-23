@@ -49,6 +49,8 @@ Lun_estimation <- function(SCST_Object,
 #' @param return_format The format of returned simulation data. Choices: list, SingleCellExperiment and Seurat.
 #' @param ... Other parameters represented in Lun, see [splatter::LunParams()]
 #'
+#' @export
+#'
 Lun_simulation <- function(estimated_result,
                            cell_num = NULL,
                            nGroups = 1,

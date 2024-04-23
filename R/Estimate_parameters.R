@@ -43,7 +43,9 @@ Estimate_parameters <- function(
       used_params <- change_parameters(extra_params, formals(right_method))
       used_params[["SCST_Object"]] <- SCST_Object
       used_params[["verbose"]] <- TRUE
-      used_params[["..."]] <- "..."
+      if("..." %in% names(formals(right_method))){
+        used_params[["..."]] <- "..."
+      }
       estimation_error <- try(
         expr = estimation_result <- do.call(right_method, used_params),
         silent = TRUE

@@ -5,6 +5,8 @@
 #'
 #' @references Github URL: <https://github.com/marchinilab/dropsim>
 #'
+#' @export
+#'
 dropsim_estimation <- function(SCST_Object,
                                verbose = FALSE
 ){
@@ -53,6 +55,8 @@ dropsim_estimation <- function(SCST_Object,
 #' @param verbose Whether to return messages or not
 #' @param seed Random seed
 #' @param return_format The format of returned simulation data. Choices: list, SingleCellExperiment and Seurat.
+#'
+#' @export
 #'
 dropsim_simulation <- function(estimated_result,
                                cell_num = NULL,

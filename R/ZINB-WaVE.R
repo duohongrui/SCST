@@ -4,6 +4,10 @@
 #' @param verbose Whether to return messages or not
 #' @param ... Other parameters represented in ZINB-WaVE, see [splatter::ZINBParams()]
 #'
+#' @importFrom stats model.matrix
+#'
+#' @export
+#'
 
 zinbwave_estimation <- function(SCST_Object,
                                 verbose = FALSE,
@@ -21,6 +25,20 @@ zinbwave_estimation <- function(SCST_Object,
   used_argument <- used_argument[-grep("params", names(used_argument))]
   used_argument <- used_argument[-grep("BPPARAM", names(used_argument))]
   used_argument <- used_argument[-length(used_argument)]
+  if(!S4Vectors::isEmpty(SCST_Object@group_label)){
+    group <- SCST_Object@group_label
+    if(!S4Vectors::isEmpty(SCST_Object@batch_label)){
+      batch <- SCST_Object@batch_label
+      used_argument$design.samples <- stats::model.matrix(~group + batch)
+    }else{
+      used_argument$design.samples <- stats::model.matrix(~group)
+    }
+  }else{
+    if(!S4Vectors::isEmpty(SCST_Object@batch_label)){
+      batch <- SCST_Object@batch_label
+      used_argument$design.samples <- stats::model.matrix(~batch)
+    }
+  }
   ##############################################################################
   ####                            Estimation                                 ###
   ##############################################################################
@@ -47,14 +65,14 @@ zinbwave_estimation <- function(SCST_Object,
 #' Simulate ScRNA-seq Data Using ZINB-WaVE
 #'
 #' @param estimated_result The SCST object after estimating parameters using [splatter::zinbwave_estimation()]
-#' @param cell_num The expected number of simulated cells. If NULL, the original cell number in the reference data will be adopted.
 #' @param verbose Whether to return messages or not
 #' @param seed Random seed
 #' @param return_format The format of returned simulation data. Choices: list, SingleCellExperiment and Seurat.
 #' @param ... Other parameters represented in ZINB-WaVE, see [splatter::zinbSimulate()]
 #'
+#' @export
+#'
 zinbwave_simulation <- function(estimated_result,
-                                cell_num = NULL,
                                 return_format,
                                 verbose = FALSE,
                                 seed,
@@ -64,9 +82,6 @@ zinbwave_simulation <- function(estimated_result,
   ####                               Check                                   ###
   ##############################################################################
   parameters <- estimated_result@estimation_result$zinbwave
-  if(!is.null(cell_num)){
-    parameters <- splatter::setParam(parameters, "nCells", cell_num)
-  }
   # Seed
   parameters <- splatter::setParam(parameters, name = "seed", value = seed)
   ##############################################################################

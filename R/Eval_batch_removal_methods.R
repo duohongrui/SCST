@@ -21,9 +21,10 @@
 #' @export
 #'
 #' @importFrom reticulate import use_condaenv py_install r_to_py py_to_r py_list_packages
-#' @importFrom SeuratObject LayerData
+#' @importFrom SeuratObject LayerData JoinLayers
 #' @importFrom Seurat CreateDimReducObject DefaultAssay
 #' @importFrom Matrix t
+#' @importFrom S4Vectors split
 #'
 EvalBatchRemovalMethods <- function(SimulationResult,
                                     conda_env,
@@ -78,7 +79,12 @@ EvalBatchRemovalMethods <- function(SimulationResult,
       Seurat::CreateSeuratObject(min.cells = min_cells,
                                  min.features = min_genes,
                                  project = "simdata",
-                                 meta.data = cell_meta) %>%
+                                 meta.data = cell_meta)
+    #### Standard workflow of Seurat
+    if(packageVersion("Seurat") >= "5.0"){
+      seurat[["RNA"]] <- split(seurat[["RNA"]], f = seurat$batch)
+    }
+    seurat <- seurat %>%
       Seurat::NormalizeData(verbose = FALSE) %>%
       Seurat::ScaleData(verbose = FALSE)
     ### Reset data and col_data
@@ -96,16 +102,16 @@ EvalBatchRemovalMethods <- function(SimulationResult,
                      do.print = FALSE,
                      seed.use = seed,
                      verbose = FALSE) %>%
-      Seurat::FindNeighbors(verbose = FALSE) %>%
       Seurat::RunUMAP(dims = 1:PCs, seed.use = seed, verbose = FALSE) %>%
-      Seurat::RunTSNE(dims = 1:PCs, seed.use = seed, verbose = FALSE)
+      Seurat::RunTSNE(dims = 1:PCs, seed.use = seed, verbose = FALSE, check_duplicates = FALSE)
 
     #### Python packages
     sc <-  reticulate::import("scanpy", convert = FALSE)
     scipy <-  reticulate::import("scipy", convert = FALSE)
     scvi <-  reticulate::import("scvi", convert = FALSE)
     if(packageVersion("Seurat") >= "5.0"){
-      X <- SeuratObject::LayerData(seurat, layer = "counts")[features, ]
+      X <- SeuratObject::JoinLayers(seurat)
+      X <- SeuratObject::LayerData(X, layer = "counts")[features, ]
     }else{
       X <- methods::slot(Seurat::GetAssay(seurat), "counts")[features, ]
     }
@@ -115,17 +121,18 @@ EvalBatchRemovalMethods <- function(SimulationResult,
     )
     sc$pp$normalize_total(adata)
     sc$pp$log1p(adata)
-    sc$pp$highly_variable_genes(adata, n_top_genes = nFeatures)
+    sc$pp$highly_variable_genes(adata, n_top_genes = as.integer(nFeatures))
     sc$tl$pca(adata, n_comps = as.integer(PCs))
     if(is.null(epochs)) {
       epochs <- reticulate::r_to_py(x = epochs)
     }else{
       epochs <- as.integer(x = epochs)
     }
+
     #-------- Methods --------#
     print_color_word(paste("------Perform Batch Removal On", method), color = "blue")
 
-    ### 4. scGen
+    ### 1. scGen
     scGen_moni <- peakRAM::peakRAM(
       seurat <- .scGen(adata = adata,
                        seurat = seurat,
@@ -137,8 +144,10 @@ EvalBatchRemovalMethods <- function(SimulationResult,
                        epochs = epochs,
                        batch_size = batch_size)
     )
+    scGen_params <- seurat[["scGen_params"]]
+    seurat <- seurat[["seurat"]]
 
-    ### 1. scVI
+    ### 2. scVI
     scVI_moni <- peakRAM::peakRAM(
       seurat <- .scVI(adata = adata,
                       seurat = seurat,
@@ -153,9 +162,10 @@ EvalBatchRemovalMethods <- function(SimulationResult,
                       genelikelihood = genelikelihood)
     )
     model <- seurat[["model"]]
+    scVI_params <- seurat[["scVI_params"]]
     seurat <- seurat[["seurat"]]
 
-    ### 2. scANVI
+    ### 3. scANVI
     scANVI_moni <- peakRAM::peakRAM(
       seurat <- .scANVI(adata = adata,
                         seurat = seurat,
@@ -165,8 +175,10 @@ EvalBatchRemovalMethods <- function(SimulationResult,
                         epochs = epochs,
                         batch_size = batch_size)
     )
+    scANVI_params <- seurat[["scANVI_params"]]
+    seurat <- seurat[["seurat"]]
 
-    ### 3. Scanorama
+    ### 4. Scanorama
     Scanorama_moni <- peakRAM::peakRAM(
       seurat <- .Scanorama(adata = adata,
                            seurat = seurat,
@@ -220,7 +232,10 @@ EvalBatchRemovalMethods <- function(SimulationResult,
     #-------- Outcome of one simulation method --------#
     list("seurat" = seurat,
          "eval_batch_removal_table" = eval_batch_removal_table,
-         "resource_monitering" = resource_monitering)
+         "resource_monitering" = resource_monitering,
+         "machine_learning_params" = list(scVI_params = scVI_params,
+                                          scANVI_params = scANVI_params,
+                                          scGen_params = scGen_params))
   })
   names(BatchRemovalResults) <- validated_methods
   return(BatchRemovalResults)
@@ -265,7 +280,7 @@ EvalBatchRemovalMethods <- function(SimulationResult,
                                  batch_info,
                                  plot = FALSE,
                                  k0 = 10)
-    kBET <- batch_estimate$summary$kBET.observed %>% mean(na.rm = TRUE)
+    kBET <- mean(batch_estimate$stats$kBET.observed, na.rm = TRUE)
 
     ### 2. LISI
     if(!requireNamespace("lisi", quietly = TRUE)){
@@ -357,11 +372,19 @@ EvalBatchRemovalMethods <- function(SimulationResult,
   scgen <- reticulate::import("scgen")
   scgen$SCGEN$setup_anndata(adata, batch_key = "batch", labels_key = "group")
   scgen_model = scgen$SCGEN(adata, n_layers = as.integer(nlayers), n_latent = as.integer(nlatent))
+  scGen_params <- formals(scgen$SCGEN) %>% as.list()
+  scGen_params$n_latent <- as.integer(nlatent)
+  scGen_params$n_layers <- as.integer(nlayers)
+  scGen_params <- scGen_params[-length(scGen_params)]
   scgen_model$train(
     max_epochs = epochs,
     batch_size = as.integer(batch_size),
     use_gpu = use_gpu
   )
+  scGen_params <- append(scGen_params, formals(scgen_model$train))
+  scGen_params$max_epochs <- epochs
+  scGen_params$batch_size <- as.integer(batch_size)
+  scGen_params$use_gpu <- use_gpu
   scgen_result = scgen_model$batch_removal()
   scgen_result = scgen_result$obsm["corrected_latent"]
   scgen_result <- as.matrix(scgen_result)
@@ -373,7 +396,8 @@ EvalBatchRemovalMethods <- function(SimulationResult,
     key = "scGen_"
   )
   seurat@reductions <- append(seurat@reductions, list("scGen" = reduction))
-  return(seurat)
+  return(list(seurat = seurat,
+              scGen_params = scGen_params))
 }
 
 
@@ -397,11 +421,20 @@ EvalBatchRemovalMethods <- function(SimulationResult,
   print_color_word(paste("\n \u2192", "scVI is running..."), color = "green")
   scvi$model$SCVI$setup_anndata(adata, batch_key = "batch")
   model = scvi$model$SCVI(adata = adata,
-                          n_latent = as.integer(x = nlatent),
-                          n_layers = as.integer(x = nlayers),
+                          n_latent = as.integer(nlatent),
+                          n_layers = as.integer(nlayers),
                           gene_likelihood = genelikelihood)
+  scVI_params <- formals(scvi$model$SCVI) %>% as.list()
+  scVI_params$n_latent <- as.integer(nlatent)
+  scVI_params$n_layers <- as.integer(nlayers)
+  scVI_params$gene_likelihood <- genelikelihood
+  scVI_params <- scVI_params[-length(scVI_params)]
   #### Training model
   model$train(max_epochs = epochs, batch_size = as.integer(batch_size), use_gpu = use_gpu)
+  scVI_params <- append(scVI_params, formals(model$train))
+  scVI_params$max_epochs <- epochs
+  scVI_params$batch_size <- as.integer(batch_size)
+  scVI_params$use_gpu <- use_gpu
   scvi_result = model$get_latent_representation()
   scvi_result <- as.matrix(scvi_result)
   rownames(scvi_result) <- reticulate::py_to_r(adata$obs$index$values)
@@ -413,6 +446,7 @@ EvalBatchRemovalMethods <- function(SimulationResult,
   )
   seurat@reductions <- append(seurat@reductions, list("scVI" = reduction))
   return(list(seurat = seurat,
+              scVI_params = scVI_params,
               model = model))
 }
 
@@ -431,9 +465,14 @@ EvalBatchRemovalMethods <- function(SimulationResult,
     unlabeled_category = "Unknown",
     labels_key = "group"
   )
+  scANVI_params <- reticulate::py_to_r(scanvi_model$init_params_)
+  scANVI_params <- append(scANVI_params$non_kwargs, scANVI_params$kwargs$model_kwargs)
   scanvi_model$train(max_epochs = epochs,
                      batch_size = as.integer(batch_size),
                      use_gpu = use_gpu)
+  scANVI_params$max_epochs <- epochs
+  scANVI_params$batch_size <- as.integer(batch_size)
+  scANVI_params$use_gpu <- use_gpu
   scANVI_result = scanvi_model$get_latent_representation()
   scANVI_result <- reticulate::py_to_r(scANVI_result)
   rownames(scANVI_result) <- reticulate::py_to_r(adata$obs$index$values)
@@ -445,7 +484,8 @@ EvalBatchRemovalMethods <- function(SimulationResult,
     key = "scANVI_"
   )
   seurat@reductions <- append(seurat@reductions, list("scANVI" = reduction))
-  return(seurat)
+  return(list(seurat = seurat,
+              scANVI_params = scANVI_params))
 }
 
 
@@ -522,6 +562,7 @@ EvalBatchRemovalMethods <- function(SimulationResult,
   }
   print_color_word(paste("\n \u2192", "Harmony is running..."), color = "green")
   set.seed(seed)
+  seurat[["RNA"]] <- S4Vectors::split(seurat[["RNA"]], f = seurat$batch)
   seurat <- harmony::RunHarmony(seurat,
                                 group.by.vars = "batch",
                                 reduction = "pca",

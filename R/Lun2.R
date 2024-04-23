@@ -5,6 +5,8 @@
 #' @param verbose Whether to return messages or not
 #' @param ... Other parameters represented in Lun2, see [splatter::lun2Estimate()]
 #'
+#' @export
+#'
 
 Lun2_estimation <- function(SCST_Object,
                             min.size = 50,
@@ -60,6 +62,8 @@ Lun2_estimation <- function(SCST_Object,
 #' @param return_format The format of returned simulation data. Choices: list, SingleCellExperiment and Seurat.
 #' @param ... Other parameters represented in Lun2, see [splatter::Lun2Params()]
 #'
+#' @export
+#'
 Lun2_simulation <- function(estimated_result,
                             cell_num = NULL,
                             gene_num = NULL,
@@ -72,14 +76,13 @@ Lun2_simulation <- function(estimated_result,
   ####                               Check                                   ###
   ##############################################################################
   parameters <- estimated_result@estimation_result$Lun2
-  # cell_num
-  if(!is.null(cell_num)){
-   cell.plates.prop <-  as.numeric(table(parameters@cell.plates))/estimated_result@cell_num
+  if(cell_num != estimated_result@cell_num){
+   cell.plates.prop <- as.numeric(table(parameters@cell.plates))/estimated_result@cell_num
    cell.plates <- proportionate(number = cell_num,
                                 result_sum_strict = cell_num,
                                 prop = cell.plates.prop,
                                 prop_sum_strict = 1)
-   cell.plates <- as.factor(cell.plates)
+   cell.plates <- factor(rep(seq_len(parameters@nPlates), cell.plates))
   }else{
     cell.plates <- parameters@cell.plates
   }
@@ -89,8 +92,7 @@ Lun2_simulation <- function(estimated_result,
   }
   existed_params <- list("cell.plates" = cell.plates,
                          "nGenes" = gene_num,
-                         "seed" = seed,
-                         "de.nGenes" = round(gene_num * 0.2))
+                         "seed" = seed)
   existed_params <- append(existed_params, list(...))
   used_argument <- change_parameters(parameters, existed_params)
   ##############################################################################
@@ -103,7 +105,7 @@ Lun2_simulation <- function(estimated_result,
   simulate_detection <- peakRAM::peakRAM(
     simulate_result <- splatter::lun2Simulate(used_argument,
                                               verbose = verbose,
-                                              zinb = TRUE)
+                                              zinb = FALSE)
   )
   ##############################################################################
   ####                        Format Conversion                              ###

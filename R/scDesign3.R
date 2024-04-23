@@ -9,6 +9,7 @@
 #' @param ... Other parameters represented in scDesign3, see [scDesign3::fit_marginal()], [scDesign3::fit_copula()], [scDesign3::extract_para()]
 #'
 #' @export
+#'
 #' @references Song, D., Wang, Q., Yan, G. et al. scDesign3 generates realistic in silico data for multimodal single-cell and spatial omics. Nat Biotechnol (2023). https://doi.org/10.1038/s41587-023-01772-1
 #'
 scDesign3_estimation <- function(SCST_Object,
@@ -31,7 +32,8 @@ scDesign3_estimation <- function(SCST_Object,
   seed <- SCST_Object@seed
   ### group
   if(!S4Vectors::isEmpty(SCST_Object@group_label)){
-    col_data <- data.frame("group_label" = paste0("Group", as.numeric(SCST_Object@group_label)))
+    col_data <- data.frame("group_label" = paste0("Group", as.numeric(factor(SCST_Object@group_label))))
+    print("Group...")
   }else{
     col_data <- data.frame("group_label" = rep("A", ncol(ref_data)))
   }
@@ -39,7 +41,8 @@ scDesign3_estimation <- function(SCST_Object,
   col_data$"cell_name" <- colnames(ref_data)
   ### batch
   if(!S4Vectors::isEmpty(SCST_Object@batch_label)){
-    col_data$batch_label <- paste0("Batch", as.numeric(SCST_Object@batch_label))
+    col_data$batch_label <- paste0("Batch", as.numeric(factor(SCST_Object@batch_label)))
+    print("Batch...")
   }
   if(!S4Vectors::isEmpty(SCST_Object@spatial_x) & !S4Vectors::isEmpty(SCST_Object@spatial_y)){
     col_data$spatial.x <- SCST_Object@spatial_x
@@ -74,7 +77,7 @@ scDesign3_estimation <- function(SCST_Object,
   if(!S4Vectors::isEmpty(SCST_Object@batch_label)){
     other_covariates <- "batch_label"
   }
-  scDeisgn3_data <- scDesign3::construct_data(
+  scDesign3_data <- scDesign3::construct_data(
     sce = sce,
     assay_use = "counts",
     celltype = "group_label",
@@ -105,8 +108,8 @@ scDesign3_estimation <- function(SCST_Object,
     }
   }
   scDesign3_est <- function(){
-    scDeisgn3_marginal <- scDesign3::fit_marginal(
-      data = scDeisgn3_data,
+    scDesign3_marginal <- scDesign3::fit_marginal(
+      data = scDesign3_data,
       predictor = ifelse(exists("predictor"), get("predictor"), "gene"),
       mu_formula = ifelse(!is.null(mu_formula), mu_formula, "1"),
       sigma_formula = ifelse(exists("sigma_formula"), get("sigma_formula"), "1"),
@@ -115,27 +118,27 @@ scDesign3_estimation <- function(SCST_Object,
       usebam = FALSE
     )
     set.seed(seed)
-    scDeisgn3_copula <- scDesign3::fit_copula(
+    scDesign3_copula <- scDesign3::fit_copula(
       sce = sce,
       assay_use = "counts",
-      marginal_list = scDeisgn3_marginal,
+      marginal_list = scDesign3_marginal,
       family_use = family_use,
       copula = copula,
       n_cores = n_cores,
-      input_data = scDeisgn3_data$dat
+      input_data = scDesign3_data$dat
     )
-    scDeisgn3_para <- scDesign3::extract_para(
+    scDesign3_para <- scDesign3::extract_para(
       sce = sce,
-      marginal_list = scDeisgn3_marginal,
+      marginal_list = scDesign3_marginal,
       n_cores = 1,
       family_use = family_use,
       new_covariate = NULL,
-      data = scDeisgn3_data$dat
+      data = scDesign3_data$dat
     )
-    estimate_result <- list(scDeisgn3_data = scDeisgn3_data,
-                            scDeisgn3_marginal = scDeisgn3_marginal,
-                            scDeisgn3_copula = scDeisgn3_copula,
-                            scDeisgn3_para = scDeisgn3_para)
+    estimate_result <- list(scDesign3_data = scDesign3_data,
+                            scDesign3_marginal = scDesign3_marginal,
+                            scDesign3_copula = scDesign3_copula,
+                            scDesign3_para = scDesign3_para)
     return(estimate_result)
 
   }
@@ -152,17 +155,17 @@ scDesign3_estimation <- function(SCST_Object,
     estimate_result <- scDesign3_est()
   )
   estimate_result <- list(sce = sce,
-                          scDeisgn3_data = estimate_result$scDeisgn3_data,
-                          scDeisgn3_marginal = estimate_result$scDeisgn3_marginal,
-                          scDeisgn3_copula = estimate_result$scDeisgn3_copula,
-                          scDeisgn3_para = estimate_result$scDeisgn3_para)
+                          scDesign3_data = estimate_result$scDesign3_data,
+                          scDesign3_marginal = estimate_result$scDesign3_marginal,
+                          scDesign3_copula = estimate_result$scDesign3_copula,
+                          scDesign3_para = estimate_result$scDesign3_para)
   ##############################################################################
   ####                           Ouput                                       ###
   ##############################################################################
-  slot(SCST_Object, "estimation_time_memory") <- list("scDeisgn3" = list("estimation_time" = estimate_detection$Elapsed_Time_sec,
+  slot(SCST_Object, "estimation_time_memory") <- list("scDesign3" = list("estimation_time" = estimate_detection$Elapsed_Time_sec,
                                                                          "estimation_memory" = estimate_detection$Peak_RAM_Used_MiB))
-  slot(SCST_Object, "estimation_result") <- list("scDeisgn3" = estimate_result)
-  slot(SCST_Object, "estimation_parameters") <- list("scDeisgn3" = NULL)
+  slot(SCST_Object, "estimation_result") <- list("scDesign3" = estimate_result)
+  slot(SCST_Object, "estimation_parameters") <- list("scDesign3" = NULL)
   return(SCST_Object)
 }
 
@@ -178,6 +181,7 @@ scDesign3_estimation <- function(SCST_Object,
 #' @param return_format The format of returned simulation data. Choices: list, SingleCellExperiment and Seurat.
 #' @param ... Other parameters represented in scDesign3, see [scDesign3::simu_new()]
 #'
+#' @export
 #'
 #' @references Song, D., Wang, Q., Yan, G. et al. scDesign3 generates realistic in silico data for multimodal single-cell and spatial omics. Nat Biotechnol (2023). https://doi.org/10.1038/s41587-023-01772-1
 #'
@@ -200,23 +204,26 @@ scDesign3_simulation <- function(estimated_result,
   ##############################################################################
   ####                               Check                                   ###
   ##############################################################################
-  parameters <- estimated_result@estimation_result$scDeisgn3
+  parameters <- estimated_result@estimation_result$scDesign3
   existed_params <- list(sce = parameters[["sce"]],
-                         mean_mat =  parameters[["scDeisgn3_para"]][["mean_mat"]],
-                         sigma_mat = parameters[["scDeisgn3_para"]][["sigma_mat"]],
-                         zero_mat = parameters[["scDeisgn3_para"]][["zero_mat"]],
-                         copula_list = parameters[["scDeisgn3_copula"]][["copula_list"]],
+                         mean_mat =  parameters[["scDesign3_para"]][["mean_mat"]],
+                         sigma_mat = parameters[["scDesign3_para"]][["sigma_mat"]],
+                         zero_mat = parameters[["scDesign3_para"]][["zero_mat"]],
+                         copula_list = parameters[["scDesign3_copula"]][["copula_list"]],
                          n_cores = n_cores,
                          family_use = family_use,
-                         input_data = parameters[["scDeisgn3_data"]][["dat"]],
-                         new_covariate = parameters[["scDeisgn3_data"]][["newCovariate"]],
-                         important_feature = parameters[["scDeisgn3_copula"]][["important_feature"]],
-                         filtered_gene = parameters[["scDeisgn3_data"]][["filtered_gene"]])
+                         input_data = parameters[["scDesign3_data"]][["dat"]],
+                         new_covariate = parameters[["scDesign3_data"]][["newCovariate"]],
+                         important_feature = parameters[["scDesign3_copula"]][["important_feature"]],
+                         filtered_gene = NULL)
   extra_params <- list(...)
   existed_params <- append(existed_params, extra_params)
   argument <- formals(scDesign3::simu_new)
   used_argument <- change_parameters(existed_params, argument)
   used_argument <- append(used_argument, list(filtered_gene = NULL))
+  if(!"new_covariate" %in% names(used_argument)){
+    used_argument <- append(used_argument, list(new_covariate = NULL))
+  }
   ##############################################################################
   ####                            Simulation                                 ###
   ##############################################################################

@@ -26,7 +26,10 @@ SPARSim_estimation <- function(SCST_Object,
     BiocManager::install("scater")
   }
   ref_data <- as.matrix(methods::slot(SCST_Object, "reference"))
-  group_label <- methods::slot(SCST_Object, "group_label")
+  condition_label <- methods::slot(SCST_Object, "group_label")
+  # if(S4Vectors::isEmpty(condition_label)){
+  #   condition_label <- methods::slot(SCST_Object, "batch_label")
+  # }
   dilution_factor <- methods::slot(SCST_Object, "dilution_factor")
   volume <- methods::slot(SCST_Object, "volume")
   seed <- methods::slot(SCST_Object, "seed")
@@ -34,13 +37,13 @@ SPARSim_estimation <- function(SCST_Object,
   ####                               Check                                   ###
   ##############################################################################
   colnames(ref_data) <- gsub(pattern = "_", replacement = ".", colnames(ref_data))
-  if(S4Vectors::isEmpty(group_label)){
+  if(S4Vectors::isEmpty(condition_label)){
     count_matrix_conditions <- list(conditionA = 1:ncol(ref_data))
   }else{
     count_matrix_conditions <- list()
-    condition <- unique(group_label)
+    condition <- unique(condition_label)
     for(i in 1:length(condition)){
-      index <- which(group_label == condition[i])
+      index <- which(condition_label == condition[i])
       count_matrix_conditions[[paste0("cond_", as.character(condition[i]))]] <- index
     }
   }
@@ -205,6 +208,7 @@ SPARSim_simulation <- function(estimated_result,
                                              result_sum_strict = nCells,
                                              prop = prop_batch,
                                              prop_sum_strict = 1)
+      batch.condition <- rep(seq_len(length(batch.condition)), batch.condition)
     }else{
       batch.condition <- as.numeric(as.factor(estimated_result@batch_label))
     }
@@ -214,7 +218,7 @@ SPARSim_simulation <- function(estimated_result,
     used_argument[["batch_parameter"]] <- SPARSim_batch_parameter
   }
   ## DEGs
-  if(length(parameters) > 1){
+  if(length(parameters) > 1 & nBatches == 1){
     ## gene number
     n_genes <- length(parameters[[1]][['intensity']])
     DE_gene_number <- round(n_genes * de_prop)
@@ -228,11 +232,11 @@ SPARSim_simulation <- function(estimated_result,
     for(group in seq_len(length(parameters)-1)){
       set.seed(seed)
       DE_multiplier <- c(stats::runif(n = ceiling(DE_group[group]/2),
-                                      min = 1/fc_group,
-                                      max = 1/fc_group),
+                                      min = 1/fc_group * group,
+                                      max = 1/fc_group * group),
                          stats::runif(n = floor(DE_group[group]/2),
-                                      min = fc_group,
-                                      max = fc_group))
+                                      min = fc_group * group,
+                                      max = fc_group * group))
       if(group >= 2){
         pre_DE <- sum(DE_group[1:(group-1)])
         if(group < 3){
@@ -285,7 +289,7 @@ SPARSim_simulation <- function(estimated_result,
     counts <- counts[-filter_index, ]
   }
 
-  if(length(parameters) != 1){
+  if(length(parameters) != 1 & nBatches == 1){
     group_name_tmp <- stringr::str_split(colnames(counts),
                                          pattern = "_",
                                          simplify = TRUE)[, 2]
@@ -312,7 +316,7 @@ SPARSim_simulation <- function(estimated_result,
                            row.names = colnames(counts))
   }
   ## row_data
-  if(length(parameters) != 1){
+  if(length(parameters) != 1 & nBatches == 1){
     if(is.null(fold_change_multiplier_record)){
       de_genes <- ifelse(fold_change_multiplier == 1, "no", "yes")
       fc <- fold_change_multiplier
